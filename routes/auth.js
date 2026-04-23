@@ -399,7 +399,7 @@ const emailHtml = `
                 ${adresse ? `<p style="font-size: 12px; color: #64748B;">📍 Adresse: ${adresse}</p>` : ''}
                 ${competences?.length ? `<p style="font-size: 12px; color: #64748B;">🩺 Compétences: ${competences.join(', ')}</p>` : ''}
                 
-                <a href="https://stevenckohr-pixel.github.io/sante-plus-frontend/" style="display: block; background: #0F172A; color: white; padding: 15px; text-align: center; text-decoration: none; border-radius: 12px; font-weight: bold;">Accéder à mon espace</a>
+                <a href="https://app.mysanteplus.com//" style="display: block; background: #0F172A; color: white; padding: 15px; text-align: center; text-decoration: none; border-radius: 12px; font-weight: bold;">Accéder à mon espace</a>
             </div>
         </div>
     </div>
