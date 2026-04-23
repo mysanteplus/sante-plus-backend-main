@@ -14,7 +14,7 @@ function getDefaultEmailHtml(nom, role) {
         ? "Vous pouvez dès à présent suivre le journal de soins de votre proche."
         : "Vous pouvez maintenant consulter votre planning d'interventions.";
 
-    const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-ux1n.onrender.com'}/assets/images/logo-general-text.png`;
+    const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-general-text.png`;
 
     return `
         <div style="background-color: #F8FAFC; padding: 50px 20px; font-family: 'Helvetica Neue', sans-serif;">
@@ -29,7 +29,7 @@ function getDefaultEmailHtml(nom, role) {
                     <p style="color: #64748B;">Votre compte a été activé avec succès.</p>
                     <p style="color: #64748B;">${roleText}</p>
                     <div style="text-align: center; margin-top: 45px;">
-                        <a href="https://stevenckohr-pixel.github.io/sante-plus-frontend/" 
+                        <a href="https://app.mysanteplus.com/" 
                            style="background: #10B981; color: white; padding: 20px 40px; border-radius: 18px; text-decoration: none; font-weight: 800;">
                             Accéder à mon espace
                         </a>
@@ -46,7 +46,7 @@ function getEmailWithCustomMessage(nom, role, customMessage) {
         ? "Vous pouvez dès à présent suivre le journal de soins de votre proche."
         : "Vous pouvez maintenant consulter votre planning d'interventions.";
 
-    const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-ux1n.onrender.com'}/assets/images/logo-general-text.png`;
+    const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-general-text.png`;
 
     return `
         <div style="background-color: #F8FAFC; padding: 50px 20px; font-family: 'Helvetica Neue', sans-serif;">
@@ -69,7 +69,7 @@ function getEmailWithCustomMessage(nom, role, customMessage) {
                     <p style="color: #64748B;">Votre compte a été activé avec succès.</p>
                     <p style="color: #64748B;">${roleText}</p>
                     <div style="text-align: center; margin-top: 45px;">
-                        <a href="https://stevenckohr-pixel.github.io/sante-plus-frontend/" 
+                        <a href="https://app.mysanteplus.com/" 
                            style="background: #10B981; color: white; padding: 20px 40px; border-radius: 18px; text-decoration: none; font-weight: 800;">
                             Accéder à mon espace
                         </a>
