@@ -55,7 +55,7 @@ router.post("/login", async (req, res) => {
 
       await supabase.from("profiles").update({ reset_code: otpCode, reset_expires: expires }).eq("id", authData.user.id);
 
-        const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-ux1n.onrender.com'}/assets/images/logo-general-icon.png`;
+        const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-general-icon.png`;
 
       const emailHtml = `
       <div style="font-family: sans-serif; color: #1e293b; max-width: 500px; margin: auto; border: 1px solid #e2e8f0; border-radius: 16px;">
@@ -159,7 +159,7 @@ router.all("/request-password-reset", async (req, res) => {
       .maybeSingle();
   
 if (profile) {
-  const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-ux1n.onrender.com'}/assets/images/logo-general-icon.png`;
+  const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-general-icon.png`;
   
   const html = `
     <div style="font-family: sans-serif; color: #1e293b; max-width: 500px; margin: auto; border: 1px solid #e2e8f0; border-radius: 16px;">
@@ -306,8 +306,8 @@ router.post("/register-family-patient", async (req, res) => {
                 // Email de confirmation
         const isMaman = formule === 'MATERNITE' || (req.body.categorie === 'MAMAN_BEBE');
         const logoSrc = isMaman 
-            ? `${process.env.API_URL || 'https://sante-plus-backend-ux1n.onrender.com'}/assets/images/logo-maman-text.png`
-            : `${process.env.API_URL || 'https://sante-plus-backend-ux1n.onrender.com'}/assets/images/logo-general-text.png`;
+            ? `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-maman-text.png`
+            : `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-general-text.png`;
         
         // Email de confirmation avec logo
         const html = `
@@ -377,7 +377,7 @@ router.post("/create-member", middleware(["COORDINATEUR"]), async (req, res) => 
 
         // 3. ENVOI DE L'EMAIL
         const nomComplet = `${prenom || ''} ${nom}`.trim();
-     const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-ux1n.onrender.com'}/assets/images/logo-general-text.png`;
+     const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-general-text.png`;
 
 const emailHtml = `
     <div style="background-color: #F8FAFC; padding: 40px; font-family: sans-serif;">
