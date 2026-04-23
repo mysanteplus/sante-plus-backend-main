@@ -4,7 +4,7 @@ const supabase = require("./supabaseClient");
 
 // Configuration du moteur Push avec les clés de sécurité VAPID
 webpush.setVapidDetails(
-  "mailto: stevenckohr@gmail.com",
+  "mailto: info@mysanteplus.com",
   process.env.VAPID_PUBLIC_KEY,
   process.env.VAPID_PRIVATE_KEY,
 );
@@ -58,7 +58,7 @@ async function sendEmailAPI(toEmail, subject, htmlContent) {
       {
         sender: {
           name: "Santé Plus Services",
-          email: "contact@terre-des-enfants-epanouis.org", 
+          email: "info@mysanteplus.com", 
         },
         to: [{ email: toEmail }],
         subject: subject,
