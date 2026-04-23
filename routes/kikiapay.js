@@ -1,16 +1,17 @@
- const express = require("express");
+const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
 const axios = require("axios");
 
+// Configuration Kikiapay depuis les variables d'environnement
 const KIKIAPAY_CONFIG = {
-    sandbox: true,
-    api_key: "b2854970ebcc11efb68863f84d1e6b32",
-    api_secret: "tpk_b2857080ebcc11efb68863f84d1e6b32"
+    sandbox: process.env.KIKIAPAY_MODE !== 'production',
+    api_key: process.env.KIKIAPAY_API_KEY,
+    api_secret: process.env.KIKIAPAY_API_SECRET
 };
 
 // ============================================================
-// 1. INITIER UN PAIEMENT (sans table pending)
+// 1. INITIER UN PAIEMENT
 // ============================================================
 router.post("/init-payment", async (req, res) => {
     const { abonnement_id, montant, patient_nom, user_email } = req.body;
@@ -19,11 +20,15 @@ router.post("/init-payment", async (req, res) => {
         return res.status(400).json({ error: "abonnement_id et montant requis" });
     }
 
+    // Vérifier que la clé API est configurée
+    if (!KIKIAPAY_CONFIG.api_key) {
+        console.error("❌ KIKIAPAY_API_KEY non configurée");
+        return res.status(500).json({ error: "Configuration paiement manquante" });
+    }
+
     try {
-        // Générer un ID de transaction unique
         const transaction_id = `SPS_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-        // Appel API Kikiapay pour créer la transaction
         const apiUrl = KIKIAPAY_CONFIG.sandbox 
             ? "https://sandbox.kikiapay.net/api/v1/transaction"
             : "https://api.kikiapay.net/api/v1/transaction";
@@ -36,8 +41,8 @@ router.post("/init-payment", async (req, res) => {
             email: user_email || "client@sps.bj",
             phone: "",
             description: `Paiement abonnement Santé Plus`,
-            redirect_url: `${process.env.FRONTEND_URL || 'https://stevenckohr-pixel.github.io/sante-plus-frontend'}/#billing?status=success&abonnement_id=${abonnement_id}&montant=${montant}`,
-            cancel_url: `${process.env.FRONTEND_URL || 'https://stevenckohr-pixel.github.io/sante-plus-frontend'}/#billing?status=cancel`,
+            redirect_url: `${process.env.FRONTEND_URL}/#billing?status=success&abonnement_id=${abonnement_id}&montant=${montant}`,
+            cancel_url: `${process.env.FRONTEND_URL}/#billing?status=cancel`,
             metadata: {
                 transaction_id: transaction_id,
                 abonnement_id: abonnement_id
@@ -66,18 +71,17 @@ router.post("/init-payment", async (req, res) => {
 });
 
 // ============================================================
-// 2. CONFIRMATION DE PAIEMENT (via paramètres URL)
+// 2. CONFIRMATION DE PAIEMENT
 // ============================================================
 router.get("/confirm", async (req, res) => {
     const { status, abonnement_id, montant, transaction_id } = req.query;
 
     console.log("🔔 Confirmation paiement reçue:", { status, abonnement_id, montant, transaction_id });
 
-    const frontendUrl = process.env.FRONTEND_URL || 'https://stevenckohr-pixel.github.io/sante-plus-frontend';
+    const frontendUrl = process.env.FRONTEND_URL;
 
     if (status === "success" && abonnement_id) {
         try {
-            // Mettre à jour l'abonnement
             const { error: aboErr } = await supabase
                 .from("abonnements")
                 .update({
@@ -91,7 +95,6 @@ router.get("/confirm", async (req, res) => {
 
             if (aboErr) throw aboErr;
 
-            // Mettre à jour le patient
             const { data: abo } = await supabase
                 .from("abonnements")
                 .select("patient_id")
