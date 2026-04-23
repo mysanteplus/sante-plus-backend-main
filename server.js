@@ -36,12 +36,12 @@ app.use((req, res, next) => {
 // ============================================================
 app.use(cors({
     origin: [
-        'https://stevenckohr-pixel.github.io',
+        'https://app.mysanteplus.com/',
         'http://localhost:5500',
         'http://127.0.0.1:5500'
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control'], // ← AJOUTÉ Cache-Control
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control'], 
     credentials: true
 }));
 
