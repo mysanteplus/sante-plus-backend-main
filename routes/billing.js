@@ -318,7 +318,7 @@ router.post("/initiate-payment", middleware(["FAMILLE"]), async (req, res) => {
         lastname: user.nom?.split(' ')[1] || 'SPS'
       },
       callback_url: `${process.env.API_URL}/api/billing/webhook`,
-      cancel_url: "https://stevenckohr-pixel.github.io/sante-plus-frontend/#billing?status=cancel",
+      cancel_url: "https://app.mysanteplus.com//#billing?status=cancel",
       metadata: {
         patient_id: patient_id,
         user_id: req.user.userId,
