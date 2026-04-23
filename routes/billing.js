@@ -424,7 +424,7 @@ router.post("/generate", middleware(["FAMILLE"]), async (req, res) => {
 router.get("/webhook/status", async (req, res) => {
   res.json({
     status: "active",
-    webhook_url: `${process.env.API_URL || 'https://sante-plus-backend-ux1n.onrender.com'}/api/billing/webhook`,
+    webhook_url: `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/api/billing/webhook`,
     secret_configured: !!process.env.FEDAPAY_WEBHOOK_SECRET,
     mode: process.env.FEDAPAY_MODE || 'sandbox'
   });
