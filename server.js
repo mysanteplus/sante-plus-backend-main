@@ -176,8 +176,7 @@ const notificationsRoutes = require("./routes/notifications");
 const commandesRoutes = require("./routes/commandes");
 const planningRoutes = require("./routes/planning");
 const educationRoutes = require("./routes/education");
-const adminUsersRoutes = require("./routes/admin-users");
-
+const adminSetupRoutes = require("./routes/admin-setup");
  
 // ============================================================
 // ROUTES
@@ -196,7 +195,7 @@ app.use("/api/planning", planningRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/api/educational", educationRoutes);
 app.use("/api/kikiapay", require("./routes/kikiapay"));
-app.use("/api/admin-users", adminUsersRoutes);
+app.use("/api/admin-setup", adminSetupRoutes);
 
 // ============================================================
 // DÉMARRAGE
