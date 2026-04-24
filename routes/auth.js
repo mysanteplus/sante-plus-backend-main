@@ -95,6 +95,78 @@ router.post("/login", async (req, res) => {
 });
 
 
+// Demander la réinitialisation du mot de passe
+router.post("/forgot-password", async (req, res) => {
+  const { email } = req.body;
+  
+  if (!email) return res.status(400).json({ error: "Email requis" });
+  
+  try {
+    // Générer un token unique
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const expires = new Date(Date.now() + 3600000); // 1 heure
+    
+    // Stocker le token
+    await supabase
+      .from("profiles")
+      .update({ reset_token: resetToken, reset_expires: expires.toISOString() })
+      .eq("email", email);
+    
+    // Envoyer l'email
+    const resetLink = `${process.env.FRONTEND_URL}/#reset-password?token=${resetToken}`;
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 500px; margin: auto;">
+        <h2 style="color: #10B981;">Réinitialisation du mot de passe</h2>
+        <p>Cliquez sur le lien ci-dessous pour réinitialiser votre mot de passe :</p>
+        <a href="${resetLink}" style="background: #10B981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px;">Réinitialiser</a>
+        <p style="margin-top: 20px;">Ce lien expire dans 1 heure.</p>
+      </div>
+    `;
+    
+    await sendEmailAPI(email, "Réinitialisation mot de passe - Santé Plus", emailHtml);
+    res.json({ success: true, message: "Email envoyé" });
+    
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Réinitialiser le mot de passe
+router.post("/reset-password", async (req, res) => {
+  const { token, newPassword } = req.body;
+  
+  if (!token || !newPassword) {
+    return res.status(400).json({ error: "Token et mot de passe requis" });
+  }
+  
+  try {
+    const { data: profile, error } = await supabase
+      .from("profiles")
+      .select("id, email")
+      .eq("reset_token", token)
+      .gt("reset_expires", new Date().toISOString())
+      .single();
+    
+    if (error || !profile) {
+      return res.status(400).json({ error: "Token invalide ou expiré" });
+    }
+    
+    // Mettre à jour le mot de passe
+    await supabase.auth.admin.updateUserById(profile.id, { password: newPassword });
+    
+    // Supprimer le token
+    await supabase
+      .from("profiles")
+      .update({ reset_token: null, reset_expires: null })
+      .eq("id", profile.id);
+    
+    res.json({ success: true, message: "Mot de passe mis à jour" });
+    
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // ============================================================
 // 2. VÉRIFICATION DU CODE 2FA
