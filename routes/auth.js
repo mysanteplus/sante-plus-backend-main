@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const supabase = require("../supabaseClient");
 const middleware = require("../middleware");
 const { sendEmailAPI } = require("../utils");
@@ -96,37 +97,72 @@ router.post("/login", async (req, res) => {
 
 
 // Demander la réinitialisation du mot de passe
+// Mot de passe oublié - Demander réinitialisation
 router.post("/forgot-password", async (req, res) => {
   const { email } = req.body;
-  
-  if (!email) return res.status(400).json({ error: "Email requis" });
-  
+
+  if (!email) {
+    return res.status(400).json({ error: "Email requis" });
+  }
+
   try {
+    // Vérifier si l'utilisateur existe
+    const { data: profile, error: profileErr } = await supabase
+      .from("profiles")
+      .select("id, email, nom")
+      .eq("email", email)
+      .single();
+
+    if (profileErr || !profile) {
+      // Ne pas révéler si l'email existe ou non (sécurité)
+      return res.json({ success: true, message: "Si cet email existe, un lien a été envoyé." });
+    }
+
     // Générer un token unique
     const resetToken = crypto.randomBytes(32).toString('hex');
     const expires = new Date(Date.now() + 3600000); // 1 heure
-    
+
     // Stocker le token
     await supabase
       .from("profiles")
       .update({ reset_token: resetToken, reset_expires: expires.toISOString() })
-      .eq("email", email);
-    
-    // Envoyer l'email
-    const resetLink = `${process.env.FRONTEND_URL}/#reset-password?token=${resetToken}`;
+      .eq("id", profile.id);
+
+    // Construire le lien de réinitialisation
+    const frontendUrl = process.env.FRONTEND_URL || "https://app.mysanteplus.com";
+    const resetLink = `${frontendUrl}/reset-password.html?token=${resetToken}`;
+
+    // Email HTML
     const emailHtml = `
-      <div style="font-family: Arial, sans-serif; max-width: 500px; margin: auto;">
-        <h2 style="color: #10B981;">Réinitialisation du mot de passe</h2>
-        <p>Cliquez sur le lien ci-dessous pour réinitialiser votre mot de passe :</p>
-        <a href="${resetLink}" style="background: #10B981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px;">Réinitialiser</a>
-        <p style="margin-top: 20px;">Ce lien expire dans 1 heure.</p>
-      </div>
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Réinitialisation mot de passe</title>
+      </head>
+      <body style="font-family: Arial, sans-serif; max-width: 500px; margin: auto; padding: 20px;">
+        <div style="text-align: center; margin-bottom: 20px;">
+          <img src="${frontendUrl}/assets/images/logo-general-text.png" style="width: 120px;">
+        </div>
+        <h2 style="color: #10B981;">Bonjour ${profile.nom || ''}</h2>
+        <p>Vous avez demandé la réinitialisation de votre mot de passe.</p>
+        <p>Cliquez sur le bouton ci-dessous :</p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${resetLink}" style="background: #10B981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px;">Réinitialiser mon mot de passe</a>
+        </div>
+        <p style="font-size: 12px; color: #666;">Ce lien expire dans 1 heure.</p>
+        <hr style="margin: 20px 0;">
+        <p style="font-size: 11px; color: #999;">Santé Plus Services - Votre partenaire de confiance</p>
+      </body>
+      </html>
     `;
-    
-    await sendEmailAPI(email, "Réinitialisation mot de passe - Santé Plus", emailHtml);
-    res.json({ success: true, message: "Email envoyé" });
-    
+
+    await sendEmailAPI(email, "Réinitialisation du mot de passe - Santé Plus", emailHtml);
+
+    res.json({ success: true, message: "Email envoyé ! Vérifiez votre boîte de réception." });
+
   } catch (err) {
+    console.error("❌ Erreur forgot-password:", err);
     res.status(500).json({ error: err.message });
   }
 });
