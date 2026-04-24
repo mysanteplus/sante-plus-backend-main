@@ -1,6 +1,54 @@
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
+const { sendEmailAPI } = require("../utils");  // ← AJOUTER
+
+// Template d'email de bienvenue
+function getWelcomeEmail(email, password, nom, prenom) {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>Bienvenue sur Santé Plus</title>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #0F172A; padding: 20px; text-align: center; border-radius: 12px 12px 0 0; }
+        .header img { max-width: 120px; }
+        .content { background: #fff; padding: 30px; border: 1px solid #e2e8f0; border-radius: 0 0 12px 12px; }
+        .credentials { background: #f1f5f9; padding: 15px; border-radius: 8px; margin: 20px 0; }
+        .btn { display: inline-block; background: #10B981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin-top: 20px; }
+        .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #94a3b8; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <img src="${process.env.FRONTEND_URL}/assets/images/logo-general-text.png" alt="Santé Plus">
+        </div>
+        <div class="content">
+          <h2>Bienvenue ${prenom} ${nom} !</h2>
+          <p>Votre compte administrateur a été créé sur la plateforme Santé Plus Services.</p>
+          
+          <div class="credentials">
+            <p><strong>📧 Email :</strong> ${email}</p>
+            <p><strong>🔑 Mot de passe :</strong> <code style="background:#fff; padding:4px 8px; border-radius:4px;">${password}</code></p>
+            <p style="font-size:12px; margin-top:10px;">⚠️ Nous vous recommandons de changer votre mot de passe lors de votre première connexion.</p>
+          </div>
+          
+          <a href="${process.env.FRONTEND_URL}" class="btn">🔗 Accéder à mon espace</a>
+          
+          <p style="margin-top: 20px;">Cordialement,<br><strong>L'équipe Santé Plus</strong></p>
+        </div>
+        <div class="footer">
+          <p>Santé Plus Services - Votre partenaire de confiance</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+}
 
 // Vérifier si des admins existent
 router.get("/has-admin", async (req, res) => {
@@ -14,14 +62,13 @@ router.get("/has-admin", async (req, res) => {
     if (error) throw error;
     res.json({ hasAdmin: data && data.length > 0 });
   } catch (err) {
+    console.error("❌ Erreur has-admin:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Créer le premier admin (sans authentification)
+// Créer le premier admin
 router.post("/create-first-admin", async (req, res) => {
-  console.log("📥 Requête reçue:", req.body);
-  console.log("🔑 Supabase service key présente:", !!process.env.SUPABASE_SERVICE_KEY);
   const { email, password, nom, prenom, telephone } = req.body;
 
   if (!email || !password || !nom) {
@@ -40,24 +87,21 @@ router.post("/create-first-admin", async (req, res) => {
       return res.status(403).json({ error: "Un administrateur existe déjà" });
     }
 
-    // 1. Créer l'utilisateur avec l'API Auth (en utilisant la clé service_role)
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+    // Créer l'utilisateur
+    const { data: authUser, error: authErr } = await supabase.auth.admin.createUser({
       email: email,
       password: password,
       email_confirm: true,
-      user_metadata: { nom, prenom, role: "COORDINATEUR" }
+      user_metadata: { nom, prenom: prenom || "", role: "COORDINATEUR" }
     });
 
-    if (authError) {
-      console.error("Auth error:", authError);
-      return res.status(500).json({ error: authError.message });
-    }
+    if (authErr) throw authErr;
 
-    // 2. Créer le profil
-    const { error: profileError } = await supabase
+    // Créer le profil
+    const { error: profileErr } = await supabase
       .from("profiles")
       .insert({
-        id: authData.user.id,
+        id: authUser.user.id,
         email: email,
         nom: nom,
         prenom: prenom || null,
@@ -66,12 +110,19 @@ router.post("/create-first-admin", async (req, res) => {
         statut_validation: "ACTIF"
       });
 
-    if (profileError) {
-      console.error("Profile error:", profileError);
-      return res.status(500).json({ error: profileError.message });
+    if (profileErr) throw profileErr;
+
+    // ✅ ENVOYER L'EMAIL
+    try {
+      const emailHtml = getWelcomeEmail(email, password, nom, prenom || "");
+      await sendEmailAPI(email, "Bienvenue sur Santé Plus Services", emailHtml);
+      console.log(`📧 Email envoyé à ${email}`);
+    } catch (emailErr) {
+      console.error("❌ Erreur envoi email:", emailErr.message);
+      // Non bloquant - le compte est quand même créé
     }
 
-    res.json({ success: true, message: "Administrateur créé avec succès" });
+    res.json({ success: true, message: "Administrateur créé avec succès. Un email a été envoyé." });
 
   } catch (err) {
     console.error("❌ Erreur:", err);
