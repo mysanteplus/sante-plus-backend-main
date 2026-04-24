@@ -78,3 +78,5 @@ router.post("/create-first-admin", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+module.exports = router;
