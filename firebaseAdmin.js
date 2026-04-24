@@ -1,6 +1,5 @@
-const admin = require("firebase-admin");
+ const admin = require("firebase-admin");
 
-// Initialiser Firebase avec les variables d'environnement
 if (!admin.apps.length) {
   const privateKey = process.env.FIREBASE_PRIVATE_KEY 
     ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
@@ -8,7 +7,7 @@ if (!admin.apps.length) {
 
   admin.initializeApp({
     credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID || "santeplus-service",
+      projectId: process.env.FIREBASE_PROJECT_ID,
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       privateKey: privateKey
     })
@@ -18,15 +17,11 @@ if (!admin.apps.length) {
 
 const messaging = admin.messaging();
 
-// 🔔 ENVOI NOTIF
 async function sendPush(token, title, body) {
     try {
         await messaging.send({
             token,
-            notification: {
-                title,
-                body
-            }
+            notification: { title, body }
         });
         console.log("🔔 Notification envoyée");
     } catch (err) {
