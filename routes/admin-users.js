@@ -1,4 +1,3 @@
-// routes/admin-users.js
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
@@ -37,7 +36,7 @@ router.post("/create-first-admin", async (req, res) => {
 
     if (existingAdmins && existingAdmins.length > 0) {
       return res.status(403).json({ 
-        error: "Un administrateur existe déjà" 
+        error: "Un administrateur existe déjà. Cette page n'est accessible qu'à l'installation initiale." 
       });
     }
 
@@ -46,7 +45,11 @@ router.post("/create-first-admin", async (req, res) => {
       email: email,
       password: password,
       email_confirm: true,
-      user_metadata: { nom, prenom: prenom || "", role: "COORDINATEUR" }
+      user_metadata: { 
+        nom: nom, 
+        prenom: prenom || "", 
+        role: "COORDINATEUR" 
+      }
     });
 
     if (authErr) throw authErr;
@@ -66,10 +69,15 @@ router.post("/create-first-admin", async (req, res) => {
 
     if (profileErr) throw profileErr;
 
-    res.json({ success: true, message: "Administrateur créé avec succès" });
+    console.log(`✅ Premier administrateur créé: ${email}`);
+    
+    res.json({ 
+      success: true, 
+      message: "Administrateur créé avec succès. Vous pouvez maintenant vous connecter."
+    });
 
   } catch (err) {
-    console.error("❌ Erreur:", err);
+    console.error("❌ Erreur création admin:", err);
     res.status(500).json({ error: err.message });
   }
 });
