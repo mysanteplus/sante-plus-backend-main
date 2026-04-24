@@ -100,78 +100,76 @@ router.post("/login", async (req, res) => {
 // Mot de passe oublié - Demander réinitialisation
 router.post("/forgot-password", async (req, res) => {
   const { email } = req.body;
+  console.log("📧 Demande reset pour:", email);
 
   if (!email) {
     return res.status(400).json({ error: "Email requis" });
   }
 
   try {
-    // Vérifier si l'utilisateur existe
-    const { data: profile, error: profileErr } = await supabase
+    const { data: profile, error } = await supabase
       .from("profiles")
       .select("id, email, nom")
       .eq("email", email)
       .single();
 
-    if (profileErr || !profile) {
-      // Ne pas révéler si l'email existe ou non (sécurité)
-      return res.json({ success: true, message: "Si cet email existe, un lien a été envoyé." });
+    if (error || !profile) {
+      // Ne pas révéler si l'email existe (sécurité)
+      return res.json({ success: true, message: "Email envoyé" });
     }
 
     // Générer un token unique
+    const crypto = require("crypto");
     const resetToken = crypto.randomBytes(32).toString('hex');
-    const expires = new Date(Date.now() + 3600000); // 1 heure
+    const expires = new Date(Date.now() + 3600000).toISOString(); // 1 heure
+
+    console.log("🔑 Token généré:", resetToken.substring(0, 20) + "...");
+    console.log("⏰ Expiration:", expires);
 
     // Stocker le token
     await supabase
       .from("profiles")
-      .update({ reset_token: resetToken, reset_expires: expires.toISOString() })
+      .update({ reset_token: resetToken, reset_expires: expires })
       .eq("id", profile.id);
 
-    // Construire le lien de réinitialisation
+    // Construire le lien
     const frontendUrl = process.env.FRONTEND_URL || "https://app.mysanteplus.com";
     const resetLink = `${frontendUrl}/reset-password.html?token=${resetToken}`;
 
     // Email HTML
     const emailHtml = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <title>Réinitialisation mot de passe</title>
-      </head>
-      <body style="font-family: Arial, sans-serif; max-width: 500px; margin: auto; padding: 20px;">
-        <div style="text-align: center; margin-bottom: 20px;">
-          <img src="${frontendUrl}/assets/images/logo-general-text.png" style="width: 120px;">
-        </div>
-        <h2 style="color: #10B981;">Bonjour ${profile.nom || ''}</h2>
-        <p>Vous avez demandé la réinitialisation de votre mot de passe.</p>
-        <p>Cliquez sur le bouton ci-dessous :</p>
+      <div style="font-family: Arial, sans-serif; max-width: 500px; margin: auto; padding: 20px;">
+        <h2 style="color: #10B981;">Réinitialisation du mot de passe</h2>
+        <p>Bonjour ${profile.nom || ''},</p>
+        <p>Cliquez sur le lien ci-dessous pour réinitialiser votre mot de passe :</p>
         <div style="text-align: center; margin: 30px 0;">
-          <a href="${resetLink}" style="background: #10B981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px;">Réinitialiser mon mot de passe</a>
+          <a href="${resetLink}" style="background: #10B981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px;">Réinitialiser</a>
         </div>
         <p style="font-size: 12px; color: #666;">Ce lien expire dans 1 heure.</p>
-        <hr style="margin: 20px 0;">
-        <p style="font-size: 11px; color: #999;">Santé Plus Services - Votre partenaire de confiance</p>
-      </body>
-      </html>
+        <hr>
+        <p style="font-size: 11px;">Santé Plus Services</p>
+      </div>
     `;
 
-    await sendEmailAPI(email, "Réinitialisation du mot de passe - Santé Plus", emailHtml);
+    await sendEmailAPI(email, "Réinitialisation mot de passe - Santé Plus", emailHtml);
 
-    res.json({ success: true, message: "Email envoyé ! Vérifiez votre boîte de réception." });
+    res.json({ success: true, message: "Email envoyé !" });
 
   } catch (err) {
-    console.error("❌ Erreur forgot-password:", err);
+    console.error("❌ Erreur:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
+
 // Réinitialiser le mot de passe
 router.post("/reset-password", async (req, res) => {
   const { token, newPassword } = req.body;
-  console.log("🔵 Token reçu:", token);
-  console.log("🔵 Nouveau mot de passe reçu");
+  console.log("🔵 Token reçu:", token?.substring(0, 20) + "...");
+
+  if (!token || !newPassword) {
+    return res.status(400).json({ error: "Token et mot de passe requis" });
+  }
 
   try {
     const { data: profile, error } = await supabase
@@ -181,15 +179,23 @@ router.post("/reset-password", async (req, res) => {
       .gt("reset_expires", new Date().toISOString())
       .single();
 
-    console.log("📋 Profil trouvé:", profile);
-
     if (error || !profile) {
+      console.error("❌ Token invalide ou expiré");
       return res.status(400).json({ error: "Token invalide ou expiré" });
     }
 
-    // Mettre à jour le mot de passe
-    await supabase.auth.admin.updateUserById(profile.id, { password: newPassword });
+    console.log("✅ Profil trouvé:", profile.id);
 
+    // Mettre à jour le mot de passe
+    const { error: updateError } = await supabase.auth.admin.updateUserById(profile.id, {
+      password: newPassword
+    });
+
+    if (updateError) throw updateError;
+
+
+
+    
     // Supprimer le token
     await supabase
       .from("profiles")
