@@ -36,7 +36,7 @@ app.use((req, res, next) => {
 // ============================================================
 app.use(cors({
     origin: [
-        'https://app.mysanteplus.com/',
+        'https://app.mysanteplus.com',
         'http://localhost:5500',
         'http://127.0.0.1:5500'
     ],
@@ -154,11 +154,6 @@ app.post('/api/send-push', async (req, res) => {
     }
 });
 
-
-app.get("/api/kikiapay/confirm", (req, res) => {
-    // Rediriger vers la fonction de confirmation
-    require("./routes/kikiapay").handleConfirm(req, res);
-});
 // ============================================================
 // IMPORTS DES ROUTES
 // ============================================================
@@ -177,7 +172,6 @@ const commandesRoutes = require("./routes/commandes");
 const planningRoutes = require("./routes/planning");
 const educationRoutes = require("./routes/education");
 const adminUsersRoutes = require("./routes/admin-users");
-const adminSetupRoutes = require("./routes/admin-setup");
  
 // ============================================================
 // ROUTES
@@ -196,10 +190,7 @@ app.use("/api/planning", planningRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/api/educational", educationRoutes);
 app.use("/api/kikiapay", require("./routes/kikiapay"));
-app.use("/api/admin-setup", adminSetupRoutes);
 app.use("/api/admin-users", adminUsersRoutes);
-
-
 
 // ============================================================
 // DÉMARRAGE
