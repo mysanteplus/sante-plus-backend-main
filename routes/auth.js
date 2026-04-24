@@ -383,26 +383,27 @@ router.post("/register-family-patient", async (req, res) => {
 
         // Insertion dans patients
         console.log("📝 3. Insertion dans patients...");
-        const patientData = {
-            nom_complet: nomCompletPatient,
-            prenom: prenom_patient,
-            nom: nom_patient,
-            age: age_patient,
-            sexe: sexe_patient,
-            adresse: adresse_patient,
-            telephone: tel_patient,
-            contact_urgence: contact_urgence,
-            contact_urgence_tel: contact_urgence_tel,
-            pathologies: pathologiesArray,
-            traitements: traitements || null,
-            allergies: allergies || null,
-            notes_medicales: notes_medicales || null,
-            formule: formule || null,
-            famille_user_id: auth.user.id,
-            statut_paiement: 'A jour',
-            statut_validation: 'EN_ATTENTE',
-            categorie_service: req.body.categorie || 'SENIOR'  
-        };
+     if (nom_patient || prenom_patient || adresse_patient) {
+    const patientData = {
+        nom_complet: nomCompletPatient,
+        prenom: prenom_patient,
+        nom: nom_patient,
+        age: age_patient,
+        sexe: sexe_patient,
+        adresse: adresse_patient,
+        telephone: tel_patient,
+        contact_urgence: contact_urgence,
+        contact_urgence_tel: contact_urgence_tel,
+        pathologies: pathologiesArray,
+        traitements: traitements || null,
+        allergies: allergies || null,
+        notes_medicales: notes_medicales || null,
+        formule: formule || null,
+        famille_user_id: auth.user.id,
+        statut_paiement: 'A jour',
+        statut_validation: 'EN_ATTENTE',
+        categorie_service: req.body.categorie || 'SENIOR'
+    };
         
         console.log("📦 Données patient:", JSON.stringify(patientData, null, 2));
         
