@@ -170,11 +170,9 @@ router.post("/forgot-password", async (req, res) => {
 // Réinitialiser le mot de passe
 router.post("/reset-password", async (req, res) => {
   const { token, newPassword } = req.body;
-  
-  if (!token || !newPassword) {
-    return res.status(400).json({ error: "Token et mot de passe requis" });
-  }
-  
+  console.log("🔵 Token reçu:", token);
+  console.log("🔵 Nouveau mot de passe reçu");
+
   try {
     const { data: profile, error } = await supabase
       .from("profiles")
@@ -182,27 +180,29 @@ router.post("/reset-password", async (req, res) => {
       .eq("reset_token", token)
       .gt("reset_expires", new Date().toISOString())
       .single();
-    
+
+    console.log("📋 Profil trouvé:", profile);
+
     if (error || !profile) {
       return res.status(400).json({ error: "Token invalide ou expiré" });
     }
-    
+
     // Mettre à jour le mot de passe
     await supabase.auth.admin.updateUserById(profile.id, { password: newPassword });
-    
+
     // Supprimer le token
     await supabase
       .from("profiles")
       .update({ reset_token: null, reset_expires: null })
       .eq("id", profile.id);
-    
+
     res.json({ success: true, message: "Mot de passe mis à jour" });
-    
+
   } catch (err) {
+    console.error("❌ Erreur:", err);
     res.status(500).json({ error: err.message });
   }
 });
-
 
 // ============================================================
 // 2. VÉRIFICATION DU CODE 2FA
