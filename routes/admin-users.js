@@ -20,6 +20,8 @@ router.get("/has-admin", async (req, res) => {
 
 // Créer le premier admin (sans authentification)
 router.post("/create-first-admin", async (req, res) => {
+  console.log("📥 Requête reçue:", req.body);
+  console.log("🔑 Supabase service key présente:", !!process.env.SUPABASE_SERVICE_KEY);
   const { email, password, nom, prenom, telephone } = req.body;
 
   if (!email || !password || !nom) {
@@ -35,30 +37,27 @@ router.post("/create-first-admin", async (req, res) => {
       .limit(1);
 
     if (existingAdmins && existingAdmins.length > 0) {
-      return res.status(403).json({ 
-        error: "Un administrateur existe déjà. Cette page n'est accessible qu'à l'installation initiale." 
-      });
+      return res.status(403).json({ error: "Un administrateur existe déjà" });
     }
 
-    // Créer l'utilisateur dans Supabase Auth
-    const { data: authUser, error: authErr } = await supabase.auth.admin.createUser({
+    // 1. Créer l'utilisateur avec l'API Auth (en utilisant la clé service_role)
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
       email: email,
       password: password,
       email_confirm: true,
-      user_metadata: { 
-        nom: nom, 
-        prenom: prenom || "", 
-        role: "COORDINATEUR" 
-      }
+      user_metadata: { nom, prenom, role: "COORDINATEUR" }
     });
 
-    if (authErr) throw authErr;
+    if (authError) {
+      console.error("Auth error:", authError);
+      return res.status(500).json({ error: authError.message });
+    }
 
-    // Créer le profil
-    const { error: profileErr } = await supabase
+    // 2. Créer le profil
+    const { error: profileError } = await supabase
       .from("profiles")
       .insert({
-        id: authUser.user.id,
+        id: authData.user.id,
         email: email,
         nom: nom,
         prenom: prenom || null,
@@ -67,19 +66,15 @@ router.post("/create-first-admin", async (req, res) => {
         statut_validation: "ACTIF"
       });
 
-    if (profileErr) throw profileErr;
+    if (profileError) {
+      console.error("Profile error:", profileError);
+      return res.status(500).json({ error: profileError.message });
+    }
 
-    console.log(`✅ Premier administrateur créé: ${email}`);
-    
-    res.json({ 
-      success: true, 
-      message: "Administrateur créé avec succès. Vous pouvez maintenant vous connecter."
-    });
+    res.json({ success: true, message: "Administrateur créé avec succès" });
 
   } catch (err) {
-    console.error("❌ Erreur création admin:", err);
+    console.error("❌ Erreur:", err);
     res.status(500).json({ error: err.message });
   }
 });
-
-module.exports = router;
