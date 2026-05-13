@@ -28,54 +28,81 @@ const upload = multer({
 });
 
 /**
- * 💊 1. CRÉER UNE COMMANDE (Famille ou Coordinateur)
+ * 💊 1. CRÉER UNE COMMANDE (Famille avec/sans patient, Coordinateur)
  */
 router.post("/add", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
     const { patient_id, liste_medocs, type_commande, urgent, images } = req.body;
     
     console.log("📦 Création commande - Images reçues:", images);
     
+    // Récupérer le type de compte de l'utilisateur
+    const { data: profile, error: profileErr } = await supabase
+        .from("profiles")
+        .select("type_compte")
+        .eq("id", req.user.userId)
+        .single();
+    
+    const isSansPatient = profile?.type_compte === 'SANS_PATIENT';
+    
+    // Vérifications
+    if (!isSansPatient && !patient_id) {
+        return res.status(400).json({ error: "ID patient requis pour ce type de compte" });
+    }
+    
+    if (isSansPatient && patient_id) {
+        // Un compte sans patient ne peut pas commander pour un patient
+        return res.status(400).json({ error: "Vous ne pouvez pas commander pour un patient" });
+    }
+    
     try {
-            const { data: commande, error } = await supabase
-                .from("commandes_meds")
-                .insert([
-                    {
-                        patient_id,
-                        demandeur_id: req.user.userId,
-                        liste_medocs,
-                        type_commande: type_commande || 'AUTRE',
-                        urgent: urgent || false,
-                        images: images || [],
-                        statut: "En attente",
-                    },
-                ])
-                .select()
-                .single();
+        let commandeData = {
+            liste_medocs,
+            type_commande: type_commande || 'AUTRE',
+            urgent: urgent || false,
+            images: images || [],
+            statut: "En attente",
+            demandeur_id: req.user.userId
+        };
+        
+        // Lier soit à patient_id, soit à user_id
+        if (isSansPatient) {
+            commandeData.user_id = req.user.userId;
+            commandeData.patient_id = null;
+        } else {
+            commandeData.patient_id = patient_id;
+            commandeData.user_id = null;
+        }
+        
+        const { data: commande, error } = await supabase
+            .from("commandes_meds")
+            .insert([commandeData])
+            .select()
+            .single();
 
         if (error) throw error;
         
-        res.json({ status: "success", message: "Demande enregistrée." });
-
-
-                // Après avoir créé la commande
+        // Notification au coordinateur (optionnelle)
         const channel = getRealtimeChannel();
-        
         await channel.send({
             type: 'broadcast',
             event: 'commande_updated',
             payload: {
                 id: commande.id,
                 patient_id: commande.patient_id,
+                user_id: commande.user_id,
                 statut: "En attente",
                 action: "created"
             }
         });
-   
+        
+        res.json({ status: "success", message: "Demande enregistrée." });
+        
     } catch (err) {
         console.error("❌ Erreur création commande:", err);
         res.status(500).json({ error: err.message });
     }
 });
+
 
  router.post("/accept", middleware(["AIDANT"]), async (req, res) => {
     const { commandeId } = req.body;
@@ -440,11 +467,22 @@ router.post("/:id/deliver", middleware(["AIDANT"]), upload.array('photos', 5), a
         });
     }
 });
+
+
 /**
- * 📋 4. LISTER LES COMMANDES (Filtrage par rôle)
+ * 📋 4. LISTER LES COMMANDES (Filtrage par rôle et type de compte)
  */
 router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, res) => {
     try {
+        // Récupérer le type de compte de l'utilisateur
+        const { data: profile } = await supabase
+            .from("profiles")
+            .select("type_compte")
+            .eq("id", req.user.userId)
+            .single();
+        
+        const isSansPatient = profile?.type_compte === 'SANS_PATIENT';
+        
         let query = supabase.from("commandes_meds").select(`
             *,
             patient:patients (id, nom_complet, adresse, famille_user_id),
@@ -452,9 +490,12 @@ router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, r
             aidant:profiles!commandes_meds_aidant_id_fkey (id, nom, telephone)
         `);
 
-        if (req.user.role === "AIDANT") {
-            // ✅ L'aidant voit TOUTES les commandes de ses patients assignés
-            // Récupérer les IDs des patients assignés à l'aidant
+        // COORDINATEUR voit tout
+        if (req.user.role === "COORDINATEUR") {
+            // Pas de filtre
+        }
+        // AIDANT voit les commandes de ses patients assignés
+        else if (req.user.role === "AIDANT") {
             const { data: assignments } = await supabase
                 .from("planning")
                 .select("patient_id")
@@ -466,29 +507,74 @@ router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, r
             if (patientIds.length === 0) {
                 return res.json([]);
             }
-            
-            // L'aidant voit toutes les commandes de ses patients (même en attente)
             query = query.in("patient_id", patientIds);
-        } 
+        }
+        // FAMILLE
         else if (req.user.role === "FAMILLE") {
-            const { data: patients } = await supabase
-                .from("patients")
-                .select("id")
-                .eq("famille_user_id", req.user.userId);
-            
-            if (!patients || patients.length === 0) return res.json([]);
-            const patientIds = patients.map(p => p.id);
-            query = query.in("patient_id", patientIds);
+            if (isSansPatient) {
+                // Compte SANS PATIENT : voir ses commandes personnelles
+                query = query.eq("user_id", req.user.userId);
+            } else {
+                // Compte AVEC PATIENT : voir les commandes de son patient
+                const { data: patients } = await supabase
+                    .from("patients")
+                    .select("id")
+                    .eq("famille_user_id", req.user.userId);
+                
+                if (!patients || patients.length === 0) {
+                    return res.json([]);
+                }
+                const patientIds = patients.map(p => p.id);
+                query = query.in("patient_id", patientIds);
+            }
         }
 
         const { data, error } = await query.order("created_at", { ascending: false });
         if (error) throw error;
         res.json(data);
     } catch (err) {
+        console.error("❌ Erreur liste commandes:", err);
         res.status(500).json({ error: err.message });
     }
 });
 
+
+
+/**
+ * 📦 5. COMMANDES PERSONNELLES (pour comptes SANS_PATIENT)
+ * Retourne uniquement les commandes liées à l'utilisateur
+ */
+router.get("/mes-commandes", middleware(["FAMILLE"]), async (req, res) => {
+    try {
+        // Vérifier que l'utilisateur est bien SANS_PATIENT
+        const { data: profile } = await supabase
+            .from("profiles")
+            .select("type_compte")
+            .eq("id", req.user.userId)
+            .single();
+        
+        if (profile?.type_compte !== 'SANS_PATIENT') {
+            return res.status(403).json({ error: "Cette route est réservée aux comptes sans patient" });
+        }
+        
+        const { data, error } = await supabase
+            .from("commandes_meds")
+            .select(`
+                *,
+                demandeur:profiles!commandes_meds_demandeur_id_fkey (id, nom, role),
+                aidant:profiles!commandes_meds_aidant_id_fkey (id, nom, telephone)
+            `)
+            .eq("user_id", req.user.userId)
+            .order("created_at", { ascending: false });
+        
+        if (error) throw error;
+        res.json(data || []);
+        
+    } catch (err) {
+        console.error("❌ Erreur mes-commandes:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
 /**
  * ✅ COORDINATEUR - VALIDER TOUTES LES LIVRAISONS DU JOUR
