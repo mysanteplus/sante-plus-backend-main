@@ -291,4 +291,108 @@ router.put("/update-full-info", middleware(["FAMILLE", "COORDINATEUR"]), async (
 });
 
 
+
+// ============================================================
+// ➕ AJOUTER UN PATIENT APRÈS INSCRIPTION (compte SANS_PATIENT)
+// ============================================================
+router.post("/add-after-registration", middleware(["FAMILLE"]), async (req, res) => {
+    const { 
+        nom_complet, 
+        prenom, 
+        nom, 
+        age, 
+        sexe, 
+        adresse, 
+        telephone, 
+        contact_urgence, 
+        notes_medicales 
+    } = req.body;
+    
+    const userId = req.user.userId;
+    
+    if (!nom_complet || !adresse) {
+        return res.status(400).json({ error: "Nom complet et adresse sont requis" });
+    }
+    
+    try {
+        // 1. Vérifier que l'utilisateur est bien un compte SANS_PATIENT
+        const { data: profile, error: profileErr } = await supabase
+            .from("profiles")
+            .select("type_compte, role")
+            .eq("id", userId)
+            .single();
+        
+        if (profileErr) throw profileErr;
+        
+        if (profile.role !== "FAMILLE") {
+            return res.status(403).json({ error: "Seuls les comptes famille peuvent ajouter un patient" });
+        }
+        
+        if (profile.type_compte !== "SANS_PATIENT") {
+            return res.status(403).json({ error: "Ce compte a déjà un patient associé" });
+        }
+        
+        // 2. Vérifier que l'utilisateur n'a pas déjà un patient
+        const { data: existingPatient, error: checkErr } = await supabase
+            .from("patients")
+            .select("id")
+            .eq("famille_user_id", userId)
+            .maybeSingle();
+        
+        if (existingPatient) {
+            return res.status(400).json({ error: "Vous avez déjà un patient associé à votre compte" });
+        }
+        
+        // 3. Créer le patient
+        const patientData = {
+            nom_complet: nom_complet,
+            prenom: prenom || null,
+            nom: nom || null,
+            age: age ? parseInt(age) : null,
+            sexe: sexe || null,
+            adresse: adresse,
+            telephone: telephone || null,
+            contact_urgence: contact_urgence || null,
+            notes_medicales: notes_medicales || null,
+            formule: "PONCTUEL",  // Formule par défaut
+            famille_user_id: userId,
+            statut_paiement: 'En attente',
+            statut_validation: 'ACTIF',
+            categorie_service: req.body.categorie || 'SENIOR',
+            a_ete_ajoute_apres: true  // ← Flag pour savoir que le patient a été ajouté après
+        };
+        
+        const { data: newPatient, error: patientErr } = await supabase
+            .from("patients")
+            .insert([patientData])
+            .select()
+            .single();
+        
+        if (patientErr) throw patientErr;
+        
+        // 4. Mettre à jour le type de compte de l'utilisateur
+        const { error: updateErr } = await supabase
+            .from("profiles")
+            .update({ 
+                type_compte: "AVEC_PATIENT",
+                updated_at: new Date()
+            })
+            .eq("id", userId);
+        
+        if (updateErr) throw updateErr;
+        
+        console.log(`✅ Patient ajouté après inscription pour l'utilisateur ${userId}`);
+        
+        res.json({ 
+            status: "success", 
+            message: "Patient ajouté avec succès. Votre compte a été transformé en compte avec patient.",
+            patient: newPatient
+        });
+        
+    } catch (err) {
+        console.error("❌ Erreur ajout patient après inscription:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 module.exports = router;
