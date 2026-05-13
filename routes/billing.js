@@ -7,6 +7,27 @@ const middleware = require("../middleware");
 const { sendPushNotification, getDurationFromPack, calculateSubscriptionEndDate } = require("../utils");
 const { createNotification } = require("./notifications");
 
+
+// ============================================================
+// DÉFINITION DES PACKS
+// ============================================================
+
+const PACKS = {
+    // Packs médicaux (avec patient)
+    MEDICAL: {
+        ESSENTIEL: { price: 50000, duration: 1, name: "Essentiel" },
+        CONFORT: { price: 85000, duration: 1, name: "Confort" },
+        SERENITE: { price: 150000, duration: 1, name: "Sérénité" }
+    },
+    // Pack Confort 24/7 (sans patient)
+    CONFORT_247: {
+        price: 25000,
+        duration: 1,
+        name: "Pack Confort 24/7",
+        description: "Commandes illimitées, support prioritaire, accès contenu éducatif"
+    }
+};
+
 // ============================================================
 // 🔐 Vérification signature webhook
 // ============================================================
@@ -162,14 +183,29 @@ router.get("/", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
     `);
 
     if (req.user.role === "FAMILLE") {
-      const { data: patient } = await supabase
-        .from("patients")
-        .select("id")
-        .eq("famille_user_id", req.user.userId)
+      // Récupérer le type de compte
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("type_compte")
+        .eq("id", req.user.userId)
         .single();
       
-      if (!patient) return res.json([]);
-      query = query.eq("patient_id", patient.id);
+      const isSansPatient = profile?.type_compte === 'SANS_PATIENT';
+      
+      if (isSansPatient) {
+        // Compte SANS_PATIENT : voir ses abonnements Confort
+        query = query.eq("user_id", req.user.userId);
+      } else {
+        // Compte AVEC_PATIENT : voir les abonnements de son patient
+        const { data: patient } = await supabase
+          .from("patients")
+          .select("id")
+          .eq("famille_user_id", req.user.userId)
+          .single();
+        
+        if (!patient) return res.json([]);
+        query = query.eq("patient_id", patient.id);
+      }
     }
 
     const { data, error } = await query.order("created_at", { ascending: false });
@@ -179,7 +215,6 @@ router.get("/", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
 // ============================================================
 // ✅ 2. PAIEMENT MANUEL (Coordinateur)
 // ============================================================
@@ -688,6 +723,143 @@ router.get("/invoice-data/:id", middleware(["COORDINATEUR", "FAMILLE"]), async (
         
     } catch (err) {
         console.error("❌ Erreur récupération facture:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+
+// ============================================================
+// 💳 7. SOUSCRIRE AU PACK CONFORT 24/7 (comptes SANS_PATIENT)
+// ============================================================
+router.post("/subscribe-confort", middleware(["FAMILLE"]), async (req, res) => {
+    const { montant, duree_mois } = req.body;
+    const userId = req.user.userId;
+    
+    try {
+        // Vérifier que l'utilisateur est bien SANS_PATIENT
+        const { data: profile, error: profileErr } = await supabase
+            .from("profiles")
+            .select("type_compte, pack_confort_actif, date_fin_pack_confort")
+            .eq("id", userId)
+            .single();
+        
+        if (profileErr) throw profileErr;
+        
+        if (profile.type_compte !== 'SANS_PATIENT') {
+            return res.status(403).json({ error: "Ce pack est réservé aux comptes sans patient" });
+        }
+        
+        const duration = duree_mois || 1;
+        const amount = montant || PACKS.CONFORT_247.price * duration;
+        
+        // Calculer la date de fin
+        const startDate = new Date();
+        const endDate = new Date(startDate);
+        endDate.setMonth(endDate.getMonth() + duration);
+        endDate.setDate(endDate.getDate() + 5); // +5 jours de grâce
+        
+        // Créer la facture d'abonnement Confort
+        const monthYear = startDate.toLocaleDateString("fr-FR", { month: "2-digit", year: "numeric" });
+        
+        const { data: abonnement, error: aboErr } = await supabase
+            .from("abonnements")
+            .insert([{
+                user_id: userId,  // ← NOUVEAU : lier à l'utilisateur, pas au patient
+                mois_annee: monthYear,
+                montant_du: amount,
+                montant_paye: amount,
+                statut: "Payé",
+                type_pack: "CONFORT_247",
+                date_paiement: startDate.toISOString(),
+                date_fin_abonnement: endDate.toISOString(),
+                duree_mois: duration,
+                mode_paiement: req.body.mode_paiement || "MANUEL"
+            }])
+            .select()
+            .single();
+        
+        if (aboErr) throw aboErr;
+        
+        // Mettre à jour le profil de l'utilisateur
+        const { error: updateErr } = await supabase
+            .from("profiles")
+            .update({ 
+                pack_confort_actif: true,
+                date_fin_pack_confort: endDate.toISOString()
+            })
+            .eq("id", userId);
+        
+        if (updateErr) throw updateErr;
+        
+        // Notification de succès
+        console.log(`✅ Pack Confort activé pour ${userId} jusqu'au ${endDate.toISOString()}`);
+        
+        res.json({ 
+            status: "success", 
+            message: `Pack Confort activé pour ${duration} mois`,
+            date_fin: endDate.toISOString()
+        });
+        
+    } catch (err) {
+        console.error("❌ Erreur souscription Pack Confort:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+// ============================================================
+// 🔍 8. VÉRIFIER LE STATUT DU PACK CONFORT
+// ============================================================
+router.get("/confort-status", middleware(["FAMILLE"]), async (req, res) => {
+    const userId = req.user.userId;
+    
+    try {
+        const { data: profile, error: profileErr } = await supabase
+            .from("profiles")
+            .select("type_compte, pack_confort_actif, date_fin_pack_confort")
+            .eq("id", userId)
+            .single();
+        
+        if (profileErr) throw profileErr;
+        
+        // Pour les comptes AVEC_PATIENT, pas de Pack Confort
+        if (profile.type_compte !== 'SANS_PATIENT') {
+            return res.json({ 
+                eligible: false, 
+                actif: false, 
+                message: "Ce compte n'est pas éligible au Pack Confort" 
+            });
+        }
+        
+        // Vérifier si le pack est encore valide
+        let isActive = profile.pack_confort_actif === true;
+        let daysRemaining = 0;
+        
+        if (isActive && profile.date_fin_pack_confort) {
+            const today = new Date();
+            const endDate = new Date(profile.date_fin_pack_confort);
+            daysRemaining = Math.ceil((endDate - today) / (1000 * 60 * 60 * 24));
+            
+            if (daysRemaining <= 0) {
+                isActive = false;
+                // Désactiver automatiquement
+                await supabase
+                    .from("profiles")
+                    .update({ pack_confort_actif: false })
+                    .eq("id", userId);
+            }
+        }
+        
+        res.json({
+            eligible: true,
+            actif: isActive,
+            date_fin: profile.date_fin_pack_confort,
+            jours_restants: daysRemaining > 0 ? daysRemaining : 0
+        });
+        
+    } catch (err) {
+        console.error("❌ Erreur statut Confort:", err);
         res.status(500).json({ error: err.message });
     }
 });
