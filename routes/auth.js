@@ -87,7 +87,9 @@ router.post("/login", async (req, res) => {
         role: userRole, 
         nom: profile.nom,
         photo_url: profile.photo_url || null,  
-        user_id: authData.user.id               
+        user_id: authData.user.id,
+        type_compte: profile.type_compte || 'AVEC_PATIENT' 
+
     });
   } catch (err) {
     console.error("Login Crash:", err.message);
