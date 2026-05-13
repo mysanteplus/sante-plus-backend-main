@@ -333,20 +333,34 @@ router.all("/reset-password", async (req, res) => {
 // ============================================================
 // 5. INSCRIPTION DUO : FAMILLE + PATIENT (Public)
 // ============================================================
+// ============================================================
+// 5. INSCRIPTION : FAMILLE AVEC ou SANS PATIENT (VERSION COMPLÈTE)
+// ============================================================
 router.post("/register-family-patient", async (req, res) => {
     const { 
         email, password, nom_famille, prenom_famille, tel_famille, lien_parente, ville_payeur,
         nom_patient, prenom_patient, age_patient, sexe_patient, adresse_patient, tel_patient,
-        contact_urgence, contact_urgence_tel, pathologies, traitements, allergies, notes_medicales, formule 
+        contact_urgence, contact_urgence_tel, pathologies, traitements, allergies, notes_medicales, formule,
+        // NOUVEAU : type de compte
+        type_compte  // 'AVEC_PATIENT' ou 'SANS_PATIENT'
     } = req.body;
     
     const cleanEmail = (email || "").toLowerCase().trim();
     const nomCompletFamille = `${prenom_famille || ''} ${nom_famille}`.trim();
-    const nomCompletPatient = `${prenom_patient || ''} ${nom_patient}`.trim();
+    const hasPatient = type_compte === 'AVEC_PATIENT';
+    
+    // Vérifier les champs obligatoires selon le type
+    if (!email || !password || !nom_famille) {
+        return res.status(400).json({ error: "Email, nom et mot de passe requis" });
+    }
+    
+    if (hasPatient && (!nom_patient || !adresse_patient)) {
+        return res.status(400).json({ error: "Pour un compte avec patient, le nom et l'adresse du patient sont requis" });
+    }
 
-    // ✅ Traitement des pathologies
+    // ✅ Traitement des pathologies (si patient présent)
     let pathologiesArray = [];
-    if (pathologies) {
+    if (hasPatient && pathologies) {
         if (Array.isArray(pathologies)) {
             pathologiesArray = pathologies;
         } else if (typeof pathologies === 'string') {
@@ -355,7 +369,7 @@ router.post("/register-family-patient", async (req, res) => {
     }
 
     try {
-        console.log("📝 1. Création du compte Auth...");
+        console.log(`📝 1. Création du compte Auth pour: ${cleanEmail} (${type_compte || 'AVEC_PATIENT'})`);
         const { data: auth, error: authErr } = await supabase.auth.signUp({ 
             email: cleanEmail, 
             password: password 
@@ -363,7 +377,7 @@ router.post("/register-family-patient", async (req, res) => {
         if (authErr) throw authErr;
         console.log("✅ Auth créé:", auth.user.id);
 
-        // Insertion dans profiles
+        // 2. Insertion dans profiles
         console.log("📝 2. Insertion dans profiles...");
         const { error: profileErr } = await supabase.from("profiles").insert({
             id: auth.user.id, 
@@ -373,7 +387,8 @@ router.post("/register-family-patient", async (req, res) => {
             email: cleanEmail,
             adresse: ville_payeur,
             role: 'FAMILLE', 
-            statut_validation: 'EN_ATTENTE'
+            statut_validation: 'EN_ATTENTE',
+            type_compte: type_compte || 'AVEC_PATIENT'  // ← NOUVEAU
         });
         if (profileErr) {
             console.error("❌ Erreur profile:", profileErr);
@@ -381,65 +396,104 @@ router.post("/register-family-patient", async (req, res) => {
         }
         console.log("✅ Profile famille créé");
 
-        // Insertion dans patients
-        console.log("📝 3. Insertion dans patients...");
-        const patientData = {
-            nom_complet: nomCompletPatient,
-            prenom: prenom_patient,
-            nom: nom_patient,
-            age: age_patient,
-            sexe: sexe_patient,
-            adresse: adresse_patient,
-            telephone: tel_patient,
-            contact_urgence: contact_urgence,
-            contact_urgence_tel: contact_urgence_tel,
-            pathologies: pathologiesArray,
-            traitements: traitements || null,
-            allergies: allergies || null,
-            notes_medicales: notes_medicales || null,
-            formule: formule || null,
-            famille_user_id: auth.user.id,
-            statut_paiement: 'A jour',
-            statut_validation: 'EN_ATTENTE',
-            categorie_service: req.body.categorie || 'SENIOR'  
-        };
-        
-        console.log("📦 Données patient:", JSON.stringify(patientData, null, 2));
-        
-        const { error: patientErr, data: patientResult } = await supabase
-            .from("patients")
-            .insert(patientData)
-            .select();
+        // 3. Insertion dans patients (seulement si AVEC_PATIENT)
+        let patientResult = null;
+        if (hasPatient) {
+            console.log("📝 3. Insertion dans patients...");
             
-        if (patientErr) {
-            console.error("❌ Erreur patient:", patientErr);
-            throw patientErr;
+            const nomCompletPatient = `${prenom_patient || ''} ${nom_patient}`.trim();
+            
+            const patientData = {
+                nom_complet: nomCompletPatient,
+                prenom: prenom_patient,
+                nom: nom_patient,
+                age: age_patient,
+                sexe: sexe_patient,
+                adresse: adresse_patient,
+                telephone: tel_patient,
+                contact_urgence: contact_urgence,
+                contact_urgence_tel: contact_urgence_tel,
+                pathologies: pathologiesArray,
+                traitements: traitements || null,
+                allergies: allergies || null,
+                notes_medicales: notes_medicales || null,
+                formule: formule || null,
+                famille_user_id: auth.user.id,
+                statut_paiement: 'A jour',
+                statut_validation: 'EN_ATTENTE',
+                categorie_service: req.body.categorie || 'SENIOR',
+                a_ete_ajoute_apres: false  // ← NOUVEAU : ajouté directement
+            };
+            
+            console.log("📦 Données patient:", JSON.stringify(patientData, null, 2));
+            
+            const { error: patientErr, data: patientInserted } = await supabase
+                .from("patients")
+                .insert(patientData)
+                .select();
+                
+            if (patientErr) {
+                console.error("❌ Erreur patient:", patientErr);
+                throw patientErr;
+            }
+            patientResult = patientInserted;
+            console.log("✅ Patient créé:", patientResult);
+        } else {
+            console.log("📝 3. Pas de patient (compte SANS_PATIENT)");
         }
-        console.log("✅ Patient créé:", patientResult);
 
-                // Email de confirmation
+        // 4. Email de confirmation (adapté selon le type)
         const isMaman = formule === 'MATERNITE' || (req.body.categorie === 'MAMAN_BEBE');
         const logoSrc = isMaman 
             ? `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-maman-text.png`
             : `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-general-text.png`;
         
-        // Email de confirmation avec logo
-        const html = `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto;">
-                <div style="text-align: center; margin-bottom: 20px;">
-                    <img src="${logoSrc}" style="width: 100px; height: auto;">
+        let emailHtml;
+        if (hasPatient) {
+            emailHtml = `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <img src="${logoSrc}" style="width: 100px; height: auto;">
+                    </div>
+                    <h2 style="color: #10B981;">Bienvenue chez Santé Plus !</h2>
+                    <p>Bonjour ${nomCompletFamille},</p>
+                    <p>Nous avons bien reçu votre demande d'admission pour le suivi de <strong>${nom_patient || ''} ${prenom_patient || ''}</strong>.</p>
+                    <p>Un coordinateur va valider votre dossier sous 24h.</p>
+                    <hr>
+                    <p style="font-size: 12px; color: #64748B;">Santé Plus Services - Bénin</p>
                 </div>
-                <h2 style="color: #10B981;">Bienvenue chez Santé Plus !</h2>
-                <p>Bonjour ${nomCompletFamille},</p>
-                <p>Nous avons bien reçu votre demande d'admission pour le suivi de <strong>${nomCompletPatient}</strong>.</p>
-                <p>Un coordinateur va valider votre dossier sous 24h.</p>
-                <hr>
-                <p style="font-size: 12px; color: #64748B;">Santé Plus Services - Bénin</p>
-            </div>
-        `;
-        await sendEmailAPI(cleanEmail, "Votre demande d'inscription - Santé Plus", html);
+            `;
+        } else {
+            emailHtml = `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <img src="${logoSrc}" style="width: 100px; height: auto;">
+                    </div>
+                    <h2 style="color: #10B981;">Bienvenue chez Santé Plus !</h2>
+                    <p>Bonjour ${nomCompletFamille},</p>
+                    <p>Nous avons bien reçu votre demande de création de compte <strong>sans patient</strong>.</p>
+                    <p>Un coordinateur va valider votre compte sous 24h.</p>
+                    <p>Une fois votre compte activé, vous pourrez :</p>
+                    <ul>
+                        <li>✅ Passer des commandes de produits</li>
+                        <li>✅ Souscrire au Pack Confort 24/7</li>
+                        <li>✅ Ajouter un patient plus tard si nécessaire</li>
+                    </ul>
+                    <hr>
+                    <p style="font-size: 12px; color: #64748B;">Santé Plus Services - Bénin</p>
+                </div>
+            `;
+        }
+        
+        await sendEmailAPI(cleanEmail, "Votre demande d'inscription - Santé Plus", emailHtml);
 
-        res.json({ status: "success", message: "Inscription enregistrée" });
+        res.json({ 
+            status: "success", 
+            message: hasPatient 
+                ? "Inscription avec patient enregistrée" 
+                : "Inscription sans patient enregistrée",
+            type_compte: type_compte || 'AVEC_PATIENT'
+        });
         
     } catch (err) { 
         console.error("❌ Erreur Inscription:", err);
