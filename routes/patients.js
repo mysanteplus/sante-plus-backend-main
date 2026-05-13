@@ -356,7 +356,7 @@ router.post("/add-after-registration", middleware(["FAMILLE"]), async (req, res)
             notes_medicales: notes_medicales || null,
             formule: "PONCTUEL",  // Formule par défaut
             famille_user_id: userId,
-            statut_paiement: 'En attente',
+            statut_paiement: 'A jour', 
             statut_validation: 'ACTIF',
             categorie_service: req.body.categorie || 'SENIOR',
             a_ete_ajoute_apres: true  // ← Flag pour savoir que le patient a été ajouté après
