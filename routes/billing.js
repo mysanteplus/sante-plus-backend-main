@@ -12,18 +12,25 @@ const { createNotification } = require("./notifications");
 // ============================================================
 
 const PACKS = {
-    // Packs médicaux (avec patient)
-    MEDICAL: {
-        ESSENTIEL: { price: 50000, duration: 1, name: "Essentiel" },
-        CONFORT: { price: 85000, duration: 1, name: "Confort" },
-        SERENITE: { price: 150000, duration: 1, name: "Sérénité" }
+    // Packs médicaux SENIOR (avec patient)
+    MEDICAL_SENIOR: {
+        ESSENTIEL: { price: 45000, duration: 1, name: "Essentiel", visits: 4 },
+        ACCOMPAGNEMENT: { price: 80000, duration: 1, name: "Accompagnement", visits: 8 },
+        SERENITE: { price: 100000, duration: 1, name: "Sérénité Seniors", visits: 12 },
+        PRIVILEGE: { price: 200000, duration: 1, name: "Privilège Famille", visits: 0 }
     },
-    // Pack Confort 24/7 (sans patient)
+    // Packs MAMAN & BÉBÉ (avec patient)
+    MEDICAL_MAMAN: {
+        ESSENTIEL: { price: 65000, duration: 0.5, name: "Essentiel", weeks: 2 },
+        CONFORT: { price: 100000, duration: 0.75, name: "Confort", weeks: 3 },
+        SERENITE: { price: 140000, duration: 1, name: "Sérénité", weeks: 4 },
+        PRIVILEGE: { price: 200000, duration: 1.25, name: "Privilège", weeks: 5 }
+    },
+    // Pack Confort 24/7 (sans patient) - inchangé
     CONFORT_247: {
         price: 25000,
         duration: 1,
-        name: "Pack Confort 24/7",
-        description: "Commandes illimitées, support prioritaire, accès contenu éducatif"
+        name: "Pack Confort 24/7"
     }
 };
 
