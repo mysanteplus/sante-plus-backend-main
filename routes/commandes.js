@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
 const middleware = require("../middleware");
-const { sendPushNotification } = require("../utils");
+const { sendPushNotification, checkActiveSubscription } = require("../utils");
 const multer = require("multer");
 const { getRealtimeChannel } = require("../utils");
 
@@ -34,6 +34,18 @@ router.post("/add", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) =>
     const { patient_id, liste_medocs, type_commande, urgent, images } = req.body;
     
     console.log("📦 Création commande - Images reçues:", images);
+    
+    // ✅ VÉRIFICATION ABONNEMENT ACTIF (sauf pour coordinateur)
+    if (req.user.role !== "COORDINATEUR") {
+        const hasSubscription = await checkActiveSubscription(req.user.userId, req.user.role);
+        if (!hasSubscription) {
+            console.log(`❌ Commande refusée: abonnement inactif pour ${req.user.userId}`);
+            return res.status(403).json({ 
+                error: "Abonnement requis pour passer une commande. Veuillez souscrire ou renouveler votre abonnement." 
+            });
+        }
+        console.log(`✅ Abonnement actif pour ${req.user.userId}`);
+    }
     
     // Récupérer le type de compte de l'utilisateur
     const { data: profile, error: profileErr } = await supabase
@@ -102,7 +114,6 @@ router.post("/add", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) =>
         res.status(500).json({ error: err.message });
     }
 });
-
 
  router.post("/accept", middleware(["AIDANT"]), async (req, res) => {
     const { commandeId } = req.body;
