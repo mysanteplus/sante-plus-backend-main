@@ -176,6 +176,61 @@ function getRealtimeChannel() {
 }
 
 
+/**
+ * 🔒 VÉRIFIER SI UN UTILISATEUR A UN ABONNEMENT ACTIF
+ */
+async function checkActiveSubscription(userId, userRole) {
+    // Les coordinateurs et aidants ont toujours accès
+    if (userRole === "COORDINATEUR" || userRole === "AIDANT") {
+        return true;
+    }
+    
+    try {
+        // Récupérer le profil pour connaître le type de compte
+        const { data: profile, error: profileErr } = await supabase
+            .from("profiles")
+            .select("type_compte, pack_confort_actif, date_fin_pack_confort")
+            .eq("id", userId)
+            .single();
+        
+        if (profileErr) return false;
+        
+        // Cas 1 : Compte AVEC_PATIENT (abonnement médical)
+        if (profile?.type_compte === 'AVEC_PATIENT') {
+            const { data: patient, error: patientErr } = await supabase
+                .from("patients")
+                .select("statut_paiement, date_fin_abonnement")
+                .eq("famille_user_id", userId)
+                .single();
+            
+            if (patientErr || !patient) return false;
+            
+            // Vérifier si le paiement est à jour
+            if (patient.statut_paiement !== 'A jour') return false;
+            
+            // Vérifier si la date de fin est dépassée
+            if (patient.date_fin_abonnement) {
+                return new Date() <= new Date(patient.date_fin_abonnement);
+            }
+            
+            return true;
+        }
+        
+        // Cas 2 : Compte SANS_PATIENT (Pack Confort)
+        if (profile?.type_compte === 'SANS_PATIENT') {
+            if (!profile.pack_confort_actif) return false;
+            if (!profile.date_fin_pack_confort) return false;
+            return new Date() <= new Date(profile.date_fin_pack_confort);
+        }
+        
+        return false;
+        
+    } catch (err) {
+        console.error("❌ Erreur checkActiveSubscription:", err);
+        return false;
+    }
+}
+
 
 // ============================================================
 // 📤 EXPORTS
@@ -189,5 +244,6 @@ module.exports = {
   isSubscriptionValid,
   getDurationFromPack,
   getRealtimeChannel,
-  calculateDiscountedPrice
+  calculateDiscountedPrice,
+  checkActiveSubscription 
 };
