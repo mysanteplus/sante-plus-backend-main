@@ -1,10 +1,10 @@
-//VERSION COMPLÈTE AVEC LA ROUTE PHOTO
+//VERSION COMPLÈTE AVEC LA ROUTE PHOTO ET VÉRIFICATION ABONNEMENT
 
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
 const middleware = require("../middleware");
-const { sendPushNotification } = require("../utils");  
+const { sendPushNotification, checkActiveSubscription } = require("../utils");  
 const { createNotification } = require("./notifications");
 const multer = require("multer");
 const upload = multer({ storage: multer.memoryStorage() });
@@ -12,7 +12,7 @@ const { sendPush } = require("../firebaseAdmin");
 
 
 // ============================================================
-// 📥 1. LIRE LE FIL D'ACTUALITÉ
+// 📥 1. LIRE LE FIL D'ACTUALITÉ (avec vérification abonnement)
 // ============================================================
 router.get(
   "/",
@@ -23,6 +23,16 @@ router.get(
     const currentRole = req.user.role;
 
     try {
+      // ✅ VÉRIFICATION ABONNEMENT ACTIF (pour les comptes FAMILLE)
+      if (currentRole === "FAMILLE") {
+        const hasSubscription = await checkActiveSubscription(currentUserId, currentRole);
+        if (!hasSubscription) {
+          console.log(`❌ Accès aux messages refusé: abonnement inactif pour ${currentUserId}`);
+          return res.json([]);
+        }
+        console.log(`✅ Abonnement actif pour ${currentUserId}`);
+      }
+
       // 🔥 CAS 1 : Récupération d'un seul message (pour Realtime)
       if (message_id) {
         const { data, error } = await supabase
@@ -154,6 +164,7 @@ function hasAccessToMessage(message, userId, role) {
   
   return false;
 }
+
 // ============================================================
 // ❤️ 2. AJOUTER UNE RÉACTION
 // ============================================================
@@ -192,7 +203,6 @@ router.post(
 // ============================================================
 // ✉️ 3. ENVOYER UN MESSAGE TEXTE
 // ============================================================
-
 
 router.post(
     "/send",
@@ -341,13 +351,9 @@ router.post(
     }
 );
 
-
 // ============================================================
-// 📸 4. ENVOYER UNE PHOTO (VERSION FINALE - SANS type_media)
+// 📸 4. ENVOYER UNE PHOTO
 // ============================================================
-/**
- * 📸 ENVOYER UNE PHOTO (VERSION CORRIGÉE)
- */
 router.post(
     "/send-photo",
     middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]),
@@ -358,7 +364,6 @@ router.post(
         const { patient_id, reply_to_id, caption, visibility } = req.body;
         const photoFile = req.file;
 
-        // Vérifications de base
         if (!photoFile) {
             return res.status(400).json({ error: "Photo requise" });
         }
@@ -367,11 +372,7 @@ router.post(
         }
 
         try {
-            // ============================================================
-            // 1. VÉRIFICATIONS DE SÉCURITÉ
-            // ============================================================
-            
-            // Vérification pour la FAMILLE
+            // Vérifications de sécurité
             if (req.user.role === "FAMILLE") {
                 const { data: patient, error } = await supabase
                     .from("patients")
@@ -385,7 +386,6 @@ router.post(
                 }
             }
 
-            // Vérification pour l'AIDANT
             if (req.user.role === "AIDANT") {
                 const { data: planning, error } = await supabase
                     .from("planning")
@@ -399,9 +399,7 @@ router.post(
                 }
             }
 
-            // ============================================================
-            // 2. UPLOAD VERS SUPABASE STORAGE
-            // ============================================================
+            // Upload vers Supabase Storage
             const fileExtension = photoFile.originalname?.split('.').pop() || 'jpg';
             const fileName = `messages/${patient_id}/${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExtension}`;
             
@@ -417,20 +415,17 @@ router.post(
                 throw uploadError;
             }
 
-            // Récupérer l'URL publique
             const { data: urlData } = supabase.storage.from("preuves").getPublicUrl(fileName);
             const photoUrl = urlData.publicUrl;
 
-            // ============================================================
-            // 3. CRÉATION DU MESSAGE DANS LA BASE
-            // ============================================================
+            // Création du message
             const messageData = {
                 patient_id: patient_id,
                 sender_id: req.user.userId,
-                content: photoUrl,                    // L'URL de la photo
-                photo_url: photoUrl,                  // Pour faciliter l'affichage
-                is_photo: true,                       // ← IMPORTANT : flag pour identifier les photos
-                type_media: 'STORY',                  // ← Pour le filtrage dans l'onglet STORY
+                content: photoUrl,
+                photo_url: photoUrl,
+                is_photo: true,
+                type_media: 'STORY',
                 reply_to_id: reply_to_id || null,
                 reactions: {},
                 read: false,
@@ -451,9 +446,7 @@ router.post(
 
             console.log("✅ Photo envoyée, message créé:", newMessage.id);
 
-            // ============================================================
-            // 4. NOTIFICATION À LA FAMILLE (si l'envoyeur n'est pas la famille)
-            // ============================================================
+            // Notification à la famille
             const { data: patient } = await supabase
                 .from("patients")
                 .select("famille_user_id, nom_complet")
@@ -461,7 +454,6 @@ router.post(
                 .single();
 
             if (patient && patient.famille_user_id && req.user.role !== "FAMILLE") {
-                // Notification push
                 sendPushNotification(
                     patient.famille_user_id,
                     "📸 Nouvelle photo",
@@ -469,7 +461,6 @@ router.post(
                     "/#feed"
                 );
                 
-                // Notification dans la base
                 if (typeof createNotification === 'function') {
                     await createNotification(
                         patient.famille_user_id,
@@ -481,9 +472,6 @@ router.post(
                 }
             }
 
-            // ============================================================
-            // 5. RÉPONSE AU CLIENT
-            // ============================================================
             res.json({ 
                 status: "success", 
                 photo_url: photoUrl,
@@ -497,6 +485,9 @@ router.post(
     }
 );
 
+// ============================================================
+// 👁️ MARQUER LES MESSAGES COMME LUS
+// ============================================================
 router.post('/mark-read', async (req, res) => {
     try {
         const { patient_id } = req.body;
@@ -505,7 +496,6 @@ router.post('/mark-read', async (req, res) => {
             return res.status(400).json({ error: "patient_id requis" });
         }
 
-        // ⚠️ adapte selon ton système auth
         const userId = req.user?.id || req.body.user_id;
 
         if (!userId) {
@@ -556,7 +546,7 @@ router.post(
         }
 
         try {
-            // Vérifications de sécurité (identiques à send-photo)
+            // Vérifications de sécurité
             if (req.user.role === "FAMILLE") {
                 const { data: patient, error } = await supabase
                     .from("patients")
@@ -583,14 +573,9 @@ router.post(
                 }
             }
 
-            // Déterminer l'extension et le type
+            // Upload vers Supabase Storage
             const originalName = documentFile.originalname;
             const extension = originalName.split('.').pop();
-            const isPdf = documentFile.mimetype === 'application/pdf';
-            const isDoc = documentFile.mimetype === 'application/msword' || documentFile.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-            const isImage = documentFile.mimetype.startsWith('image/');
-            
-            // Upload vers Supabase Storage
             const fileName = `documents/${patient_id}/${Date.now()}_${Math.random().toString(36).substring(7)}.${extension}`;
             
             const { error: uploadError } = await supabase.storage
@@ -607,17 +592,6 @@ router.post(
 
             const { data: urlData } = supabase.storage.from("documents").getPublicUrl(fileName);
             const documentUrl = urlData.publicUrl;
-
-            // Déterminer l'icône pour l'affichage
-            let iconClass = 'fa-file-pdf';
-            let colorClass = 'text-red-500';
-            if (isDoc) {
-                iconClass = 'fa-file-word';
-                colorClass = 'text-blue-500';
-            } else if (isImage) {
-                iconClass = 'fa-file-image';
-                colorClass = 'text-green-500';
-            }
 
             // Insertion du message
             const messageData = {
@@ -667,7 +641,5 @@ router.post(
         }
     }
 );
-
-
 
 module.exports = router;
