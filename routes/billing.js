@@ -4,7 +4,7 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
 const middleware = require("../middleware");
-const { sendPushNotification, getDurationFromPack, calculateSubscriptionEndDate } = require("../utils");
+const { sendPushNotification, getDurationFromPack, calculateSubscriptionEndDate, checkActiveSubscription } = require("../utils");
 const { createNotification } = require("./notifications");
 
 // ============================================================
@@ -116,7 +116,6 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
             const endDate = calculateSubscriptionEndDate(paymentDate, durationMonths, 5);
             const monthYear = paymentDate.toLocaleDateString("fr-FR", { month: "2-digit", year: "numeric" });
             
-            // Créer l'abonnement
             const { error: aboErr } = await supabase
                 .from("abonnements")
                 .insert([{
@@ -135,7 +134,6 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
             
             if (aboErr) throw aboErr;
             
-            // Mettre à jour le patient
             await supabase
                 .from("patients")
                 .update({
@@ -146,7 +144,6 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
                 })
                 .eq("id", patientId);
             
-            // Mettre à jour la transaction
             if (pending?.id) {
                 await supabase
                     .from("pending_transactions")
@@ -154,7 +151,6 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
                     .eq("id", pending.id);
             }
             
-            // Notification
             const { data: patient } = await supabase
                 .from("patients")
                 .select("famille_user_id, nom_complet")
@@ -690,6 +686,61 @@ router.get("/confort-status", middleware(["FAMILLE"]), async (req, res) => {
         
     } catch (err) {
         console.error("❌ Erreur statut Confort:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============================================================
+// 🔍 9. VÉRIFIER LE STATUT D'ABONNEMENT (pour frontend)
+// ============================================================
+
+router.get("/subscription-status", middleware(["FAMILLE"]), async (req, res) => {
+    try {
+        const hasSubscription = await checkActiveSubscription(req.user.userId, req.user.role);
+        
+        let subscriptionInfo = {
+            active: hasSubscription,
+            type: null,
+            endDate: null,
+            daysRemaining: 0
+        };
+        
+        if (hasSubscription) {
+            const { data: profile } = await supabase
+                .from("profiles")
+                .select("type_compte, date_fin_pack_confort")
+                .eq("id", req.user.userId)
+                .single();
+            
+            if (profile?.type_compte === 'SANS_PATIENT') {
+                subscriptionInfo.type = 'CONFORT_247';
+                subscriptionInfo.endDate = profile.date_fin_pack_confort;
+                if (profile.date_fin_pack_confort) {
+                    const daysRemaining = Math.ceil((new Date(profile.date_fin_pack_confort) - new Date()) / (1000 * 60 * 60 * 24));
+                    subscriptionInfo.daysRemaining = daysRemaining > 0 ? daysRemaining : 0;
+                }
+            } else {
+                const { data: patient } = await supabase
+                    .from("patients")
+                    .select("type_pack, date_fin_abonnement")
+                    .eq("famille_user_id", req.user.userId)
+                    .single();
+                
+                if (patient) {
+                    subscriptionInfo.type = patient.type_pack;
+                    subscriptionInfo.endDate = patient.date_fin_abonnement;
+                    if (patient.date_fin_abonnement) {
+                        const daysRemaining = Math.ceil((new Date(patient.date_fin_abonnement) - new Date()) / (1000 * 60 * 60 * 24));
+                        subscriptionInfo.daysRemaining = daysRemaining > 0 ? daysRemaining : 0;
+                    }
+                }
+            }
+        }
+        
+        res.json(subscriptionInfo);
+        
+    } catch (err) {
+        console.error("❌ Erreur subscription-status:", err);
         res.status(500).json({ error: err.message });
     }
 });
