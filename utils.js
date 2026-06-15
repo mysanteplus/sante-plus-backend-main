@@ -13,6 +13,16 @@ webpush.setVapidDetails(
  * 🔔 ENVOYER UNE NOTIFICATION PUSH
  */
 
+/**
+ * 🔔 ENVOYER UNE NOTIFICATION PUSH FIREBASE UNIQUEMENT
+ * 
+ * Important :
+ * Cette fonction NE crée PAS de ligne dans la table notifications.
+ * Elle envoie seulement la notification système via Firebase.
+ * 
+ * Pour créer une notification complète :
+ * utilise createNotification() dans routes/notifications.js
+ */
 async function sendPushNotification(userId, title, message, url = "/") {
   try {
     const { data: profile, error } = await supabase
@@ -34,21 +44,15 @@ async function sendPushNotification(userId, title, message, url = "/") {
     console.log(`📨 Envoi push à ${userId}`);
 
     const { sendPush } = require("./firebaseAdmin");
-    await sendPush(profile.push_token, title, message, url);
 
-    await supabase
-      .from("notifications")
-      .insert([{
-        user_id: userId,
-        title,
-        message,
-        type: "push",
-        url: url || "/",
-        read: false,
-        created_at: new Date()
-      }]);
+    await sendPush(
+      profile.push_token,
+      title,
+      message,
+      url || "/"
+    );
 
-    console.log(`✅ Notification envoyée et sauvegardée pour ${userId}`);
+    console.log(`✅ Push Firebase envoyé pour ${userId}`);
     return true;
 
   } catch (err) {
@@ -56,8 +60,6 @@ async function sendPushNotification(userId, title, message, url = "/") {
     return false;
   }
 }
-
-
 
 /**
  * 📧 ENVOYER UN EMAIL VIA BREVO API
