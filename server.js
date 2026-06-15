@@ -2,6 +2,9 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
+const mongoSanitize = require("express-mongo-sanitize");
 
 const supabase = require("./supabaseClient");
 const middleware = require("./middleware");
@@ -12,6 +15,44 @@ const app = express();
 // CONFIGURATION MULTER
 // ============================================================
 const upload = multer({ storage: multer.memoryStorage() });
+
+// ============================================================
+// MIDDLEWARES DE SÉCURITÉ
+// ============================================================
+
+// 1. Helmet - Sécurise les headers HTTP
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com"],
+            scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.jsdelivr.net", "https://www.gstatic.com"],
+            imgSrc: ["'self'", "data:", "https://*.supabase.co"],
+            connectSrc: ["'self'", "https://*.supabase.co", "https://*.onrender.com"],
+            fontSrc: ["'self'", "data:"],
+        },
+    },
+}));
+
+// 2. Rate Limiting - Limite les tentatives de connexion
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // 5 tentatives
+    message: { error: "Trop de tentatives, réessayez dans 15 minutes" },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+const apiLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 100, // 100 requêtes par minute
+    message: { error: "Trop de requêtes, veuillez ralentir" },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+// 3. Sanitize - Nettoie les entrées contre les injections NoSQL
+app.use(mongoSanitize());
 
 // ============================================================
 // MIDDLEWARES GLOBAUX
@@ -155,6 +196,18 @@ app.post('/api/send-push', async (req, res) => {
 });
 
 // ============================================================
+// ROUTES AVEC LIMITEURS
+// ============================================================
+
+// Routes d'authentification avec limiteur strict
+app.use("/api/auth/login", authLimiter);
+app.use("/api/auth/register-family-patient", authLimiter);
+app.use("/api/auth/forgot-password", authLimiter);
+
+// Routes API générales avec limiteur standard
+app.use("/api", apiLimiter);
+
+// ============================================================
 // IMPORTS DES ROUTES
 // ============================================================
 const authRoutes = require("./routes/auth");
@@ -165,6 +218,7 @@ const messagesRoutes = require("./routes/messages");
 const dashboardRoutes = require("./routes/dashboard");
 const aidantRoutes = require("./routes/aidants");
 const adminRoutes = require("./routes/admin");
+const adminSetupRoutes = require("./routes/admin-setup");
 const startCronJobs = require("./cron");
 const assignmentRoutes = require("./routes/assignments");
 const notificationsRoutes = require("./routes/notifications");
@@ -178,6 +232,7 @@ const adminUsersRoutes = require("./routes/admin-users");
 // ============================================================
 app.use("/api/auth", authRoutes);
 app.use("/api/billing", billingRoutes);
+app.use("/api/admin-setup", adminSetupRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/aidants", aidantRoutes);
