@@ -34,20 +34,29 @@ async function sendPush(token, title, body) {
                 body: body
             },
             android: {
-                priority: "high",  // 🔥 Haute priorité
-                ttl: 86400000,     // 24h
+                priority: "high",        // 🔥 TRÈS IMPORTANT
+                ttl: 86400000,
                 notification: {
                     sound: "default",
-                    channelId: "sante_plus_channel",  // Canal dédié
-                    priority: "high",
-                    visibility: "public",  // Visible sur écran verrouillé
-                    clickAction: "MAIN_ACTIVITY",
-                    tag: "sante_plus_notification"
+                    channelId: "sante_plus_channel",
+                    priority: "max",      // 🔥 PRIORITÉ MAXIMALE
+                    visibility: "public",
+                    clickAction: "FLUTTER_NOTIFICATION_CLICK",
+                    showWhen: true,
+                    localOnly: false,
+                    defaultSound: true,
+                    defaultVibrateTimings: true,
+                    sticky: false,
+                    notificationCount: 1,
+                    // 🔥 Pour force le popup
+                    actions: [
+                        { title: "Ouvrir", icon: "" }
+                    ]
                 }
             },
             apns: {
                 headers: {
-                    "apns-priority": "10"  // Haute priorité iOS
+                    "apns-priority": "10"
                 },
                 payload: {
                     aps: {
@@ -57,20 +66,25 @@ async function sendPush(token, title, body) {
                         },
                         sound: "default",
                         badge: 1,
-                        contentAvailable: true  // App en arrière-plan
+                        contentAvailable: true,
+                        mutableContent: true
                     }
                 }
             },
             webpush: {
                 headers: {
-                    Urgency: "high"
+                    Urgency: "high",
+                    "TTL": "86400"
                 },
                 notification: {
                     requireInteraction: true,
-                    vibrate: [200, 100, 200],
+                    vibrate: [200, 100, 200, 100, 200],
                     icon: "https://app.mysanteplus.com/assets/images/logo-general-icon.png",
                     badge: "https://app.mysanteplus.com/assets/images/logo-general-icon.png",
-                    silent: false
+                    silent: false,
+                    actions: [
+                        { action: "open", title: "Ouvrir" }
+                    ]
                 }
             }
         };
