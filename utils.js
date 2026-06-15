@@ -13,9 +13,10 @@ webpush.setVapidDetails(
 /**
  * 🔔 ENVOYER UNE NOTIFICATION PUSH (VIA FIREBASE UNIQUEMENT)
  */
+
 async function sendPushNotification(userId, title, message, url = "/") {
   try {
-    // Récupérer le token FCM depuis la base
+    // 1. Récupérer le token FCM depuis la base
     const { data: profile, error } = await supabase
       .from("profiles")
       .select("push_token")
@@ -24,25 +25,24 @@ async function sendPushNotification(userId, title, message, url = "/") {
 
     if (error || !profile?.push_token) {
       console.log(`📭 Pas de token FCM pour l'utilisateur ${userId}`);
-      return;
+      return false;
     }
 
-    // Envoyer via Firebase (le backend s'en chargera via firebaseAdmin.js)
-    // On appelle notre API backend qui utilise firebase-admin
-    await axios.post(`${process.env.API_URL}/send-push`, {
-      token: profile.push_token,
-      title: title,
-      body: message,
-      url: url
-    });
+    console.log(`📨 Envoi push à ${userId} avec token: ${profile.push_token.substring(0, 20)}...`);
 
+    // 2. Utiliser firebase-admin directement (pas d'appel HTTP)
+    const { sendPush } = require("./firebaseAdmin");
+    
+    await sendPush(profile.push_token, title, message);
+    
     console.log(`✅ Notification FCM envoyée à ${userId}`);
+    return true;
 
   } catch (err) {
     console.error("❌ Erreur sendPushNotification:", err.message);
+    return false;
   }
 }
-
 /**
  * 📧 ENVOYER UN EMAIL VIA BREVO API
  */
