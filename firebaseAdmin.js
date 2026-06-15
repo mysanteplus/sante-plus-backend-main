@@ -27,26 +27,37 @@ async function sendPush(token, title, body) {
         
         console.log(`📨 Envoi push à token: ${token.substring(0, 30)}...`);
         
-        // ✅ Format corrigé pour Firebase v10+
         const message = {
             token: token,
             notification: { 
                 title: title, 
                 body: body
-                // ❌ sound n'est pas supporté ici, on le met dans android/apns
             },
             android: {
-                priority: "high",
+                priority: "high",  // 🔥 Haute priorité
+                ttl: 86400000,     // 24h
                 notification: {
                     sound: "default",
-                    channelId: "sante_plus_channel"
+                    channelId: "sante_plus_channel",  // Canal dédié
+                    priority: "high",
+                    visibility: "public",  // Visible sur écran verrouillé
+                    clickAction: "MAIN_ACTIVITY",
+                    tag: "sante_plus_notification"
                 }
             },
             apns: {
+                headers: {
+                    "apns-priority": "10"  // Haute priorité iOS
+                },
                 payload: {
                     aps: {
+                        alert: {
+                            title: title,
+                            body: body
+                        },
                         sound: "default",
-                        badge: 1
+                        badge: 1,
+                        contentAvailable: true  // App en arrière-plan
                     }
                 }
             },
@@ -58,7 +69,8 @@ async function sendPush(token, title, body) {
                     requireInteraction: true,
                     vibrate: [200, 100, 200],
                     icon: "https://app.mysanteplus.com/assets/images/logo-general-icon.png",
-                    badge: "https://app.mysanteplus.com/assets/images/logo-general-icon.png"
+                    badge: "https://app.mysanteplus.com/assets/images/logo-general-icon.png",
+                    silent: false
                 }
             }
         };
