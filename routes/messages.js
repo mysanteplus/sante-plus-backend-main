@@ -4,12 +4,10 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
 const middleware = require("../middleware");
-const { sendPushNotification, checkActiveSubscription } = require("../utils");  
+const { checkActiveSubscription } = require("../utils");  
 const { createNotification } = require("./notifications");
 const multer = require("multer");
 const upload = multer({ storage: multer.memoryStorage() });
-const { sendPush } = require("../firebaseAdmin");
-
 
 // ============================================================
 // 📥 1. LIRE LE FIL D'ACTUALITÉ (avec vérification abonnement)
@@ -166,6 +164,54 @@ function hasAccessToMessage(message, userId, role) {
 }
 
 // ============================================================
+// 🔔 NOTIFIER LES DESTINATAIRES D'UN MESSAGE
+// ============================================================
+async function notifyMessageRecipients({
+  patient_id,
+  sender_id,
+  title,
+  message,
+  url = "/#feed"
+}) {
+  try {
+    const { data: patient, error } = await supabase
+      .from("patients")
+      .select("famille_user_id, coordonnateur_id, nom_complet")
+      .eq("id", patient_id)
+      .single();
+
+    if (error || !patient) {
+      console.warn("⚠️ Patient introuvable pour notification message:", error?.message);
+      return;
+    }
+
+    const targetIds = [
+      patient.famille_user_id,
+      patient.coordonnateur_id
+    ].filter(id => id && id !== sender_id);
+
+    if (targetIds.length === 0) {
+      console.log("📭 Aucun destinataire à notifier pour ce message");
+      return;
+    }
+
+    for (const targetId of targetIds) {
+      await createNotification(
+        targetId,
+        title,
+        message,
+        "message",
+        url
+      );
+    }
+
+    console.log(`✅ ${targetIds.length} notification(s) message envoyée(s)`);
+  } catch (err) {
+    console.error("❌ Erreur notifyMessageRecipients:", err.message);
+  }
+}
+
+// ============================================================
 // ❤️ 2. AJOUTER UNE RÉACTION
 // ============================================================
 router.post(
@@ -269,78 +315,27 @@ router.post(
 
             if (error) throw error;
 
-            // 🔔 =========================
-            // 🔥 PUSH NOTIFICATION (CORRIGÉ)
-            // =========================
+// 🔔 Notification interne + push système
+let notificationTitle = "💬 Nouveau message";
+let notificationBody = content || "Un nouveau message a été envoyé.";
 
-            // ✅ récupérer les bons utilisateurs liés au patient
-            const { data: patientUsers, error: patientUsersError } = await supabase
-                .from("patients")
-                .select("famille_user_id, coordonnateur_id")
-                .eq("id", patient_id)
-                .single();
+if (is_photo) {
+    notificationTitle = "📸 Nouvelle photo";
+    notificationBody = "Une nouvelle photo a été ajoutée au journal.";
+}
 
-            if (patientUsersError) {
-                console.error("❌ Erreur patient:", patientUsersError);
-            }
+if (type_media === "DOCUMENT") {
+    notificationTitle = "📄 Nouveau document";
+    notificationBody = "Un nouveau document a été ajouté au dossier.";
+}
 
-            const targetIds = [
-                patientUsers?.famille_user_id,
-                patientUsers?.coordonnateur_id
-            ].filter(id => id && id !== sender_id);
-
-            const { data: users } = await supabase
-                .from("profiles")
-                .select("push_token, id")
-                .in("id", targetIds);
-
-            if (users && users.length > 0) {
-                await Promise.all(
-                    users
-                        .filter(u => u.push_token)
-                        .map(u =>
-                            sendPush(
-                                u.push_token,
-                                "💬 Nouveau message",
-                                content || "📷 Photo"
-                            )
-                        )
-                );
-            } else {
-                console.log("⚠️ Aucun utilisateur à notifier");
-            }
-
-            // 🔔 =========================
-            // 🔁 TON CODE EXISTANT (INTOUCHÉ)
-            // =========================
-
-            const { data: patient } = await supabase
-                .from("patients")
-                .select("famille_user_id, nom_complet")
-                .eq("id", patient_id)
-                .single();
-
-            if (patient && patient.famille_user_id && req.user.role !== "FAMILLE") {
-                let notificationTitle = "📝 Nouveau message";
-                let notificationBody = `Nouveau message dans le journal de ${patient.nom_complet}`;
-
-                if (is_photo) {
-                    notificationTitle = "📸 Nouvelle photo";
-                    notificationBody = `Une nouvelle photo a été ajoutée au journal de ${patient.nom_complet}`;
-                }
-
-                if (type_media === 'DOCUMENT') {
-                    notificationTitle = "📄 Nouveau document";
-                    notificationBody = `Un nouveau document a été ajouté pour ${patient.nom_complet}`;
-                }
-
-                sendPushNotification(
-                    patient.famille_user_id,
-                    notificationTitle,
-                    notificationBody,
-                    "/#feed"
-                );
-            }
+await notifyMessageRecipients({
+    patient_id,
+    sender_id,
+    title: notificationTitle,
+    message: notificationBody,
+    url: "/#feed"
+});
 
             res.json({ status: "success" });
 
@@ -446,31 +441,14 @@ router.post(
 
             console.log("✅ Photo envoyée, message créé:", newMessage.id);
 
-            // Notification à la famille
-            const { data: patient } = await supabase
-                .from("patients")
-                .select("famille_user_id, nom_complet")
-                .eq("id", patient_id)
-                .single();
-
-            if (patient && patient.famille_user_id && req.user.role !== "FAMILLE") {
-                sendPushNotification(
-                    patient.famille_user_id,
-                    "📸 Nouvelle photo",
-                    `Une nouvelle photo a été ajoutée au journal de ${patient.nom_complet}`,
-                    "/#feed"
-                );
-                
-                if (typeof createNotification === 'function') {
-                    await createNotification(
-                        patient.famille_user_id,
-                        "📸 Nouvelle photo",
-                        `Une photo a été ajoutée au journal de ${patient.nom_complet}`,
-                        "message",
-                        "/#feed"
-                    );
-                }
-            }
+          // Notification interne + push système
+          await notifyMessageRecipients({
+              patient_id,
+              sender_id: req.user.userId,
+              title: "📸 Nouvelle photo",
+              message: "Une nouvelle photo a été ajoutée au journal.",
+              url: "/#feed"
+          });
 
             res.json({ 
                 status: "success", 
@@ -488,7 +466,7 @@ router.post(
 // ============================================================
 // 👁️ MARQUER LES MESSAGES COMME LUS
 // ============================================================
-router.post('/mark-read', async (req, res) => {
+router.post('/mark-read', middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, res) => {
     try {
         const { patient_id } = req.body;
 
@@ -496,7 +474,7 @@ router.post('/mark-read', async (req, res) => {
             return res.status(400).json({ error: "patient_id requis" });
         }
 
-        const userId = req.user?.id || req.body.user_id;
+        const userId = req.user.userId;
 
         if (!userId) {
             return res.status(401).json({ error: "Utilisateur non identifié" });
@@ -611,29 +589,19 @@ router.post(
 
             if (insertError) throw insertError;
 
-            // Notification à la famille
-            const { data: patient } = await supabase
-                .from("patients")
-                .select("famille_user_id, nom_complet")
-                .eq("id", patient_id)
-                .single();
-
-            if (patient && patient.famille_user_id && req.user.role !== "FAMILLE") {
-                sendPushNotification(
-                    patient.famille_user_id,
-                    "📄 Nouveau document",
-                    `Un nouveau document a été ajouté au journal de ${patient.nom_complet}`,
-                    "/#feed"
-                );
-            }
-
-            res.json({ 
-                status: "success", 
-                document_url: documentUrl,
-                filename: originalName,
-                icon: iconClass,
-                color: colorClass
+                      // Notification interne + push système
+            await notifyMessageRecipients({
+                patient_id,
+                sender_id: req.user.userId,
+                title: "📄 Nouveau document",
+                message: "Un nouveau document a été ajouté au dossier.",
+                url: "/#feed"
             });
+          res.json({ 
+              status: "success", 
+              document_url: documentUrl,
+              filename: originalName
+          });
 
         } catch (err) {
             console.error("❌ Erreur send-document:", err.message);
