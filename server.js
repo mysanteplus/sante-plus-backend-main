@@ -132,10 +132,10 @@ app.post('/api/notifications/send', middleware(), async (req, res) => {
 });
 
 
-// Route pour sauvegarder le token push
-app.post('/api/save-push-token', async (req, res) => {
+app.post('/api/save-push-token', middleware(), async (req, res) => {
     try {
-        const { token, user_id } = req.body;
+        const { token } = req.body;
+        const userId = req.user.userId;
 
         if (!token) {
             return res.status(400).json({ error: "Token manquant" });
@@ -144,9 +144,9 @@ app.post('/api/save-push-token', async (req, res) => {
         await supabase
             .from('profiles')
             .update({ push_token: token })
-            .eq('id', user_id);
+            .eq('id', userId);
 
-        console.log("🔥 Token sauvegardé:", user_id);
+        console.log("🔥 Token sauvegardé:", userId);
 
         res.json({ success: true });
 
