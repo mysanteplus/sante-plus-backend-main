@@ -8,6 +8,7 @@ const mongoSanitize = require("express-mongo-sanitize");
 
 const supabase = require("./supabaseClient");
 const middleware = require("./middleware");
+const { createNotification } = require("./routes/notifications");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -98,40 +99,38 @@ app.get("/", (req, res) => res.send("🚀 Santé Plus Services API opérationnel
 // ROUTES DE NOTIFICATIONS
 // ============================================================
 
-// Route pour les notifications (utilisée par visites.js)
 app.post('/api/notifications/send', middleware(), async (req, res) => {
     try {
         const { userId, title, message, type, url } = req.body;
-        
-        const { error } = await supabase.from("notifications").insert([{
-            user_id: userId,
-            title: title,
-            message: message,
-            type: type || "visit",
-            url: url || "/",
-            read: false,
-            created_at: new Date()
-        }]);
-        
-        if (error) throw error;
-        
-        const { sendPush } = require("./firebaseAdmin");
-        const { data: profile } = await supabase
-            .from("profiles")
-            .select("push_token")
-            .eq("id", userId)
-            .single();
-        
-        if (profile?.push_token) {
-            await sendPush(profile.push_token, title, message);
+
+        if (!userId || !title || !message) {
+            return res.status(400).json({
+                error: "userId, title et message sont requis"
+            });
         }
-        
+
+        const ok = await createNotification(
+            userId,
+            title,
+            message,
+            type || "default",
+            url || "/"
+        );
+
+        if (!ok) {
+            return res.status(500).json({
+                error: "Notification non créée"
+            });
+        }
+
         res.json({ success: true });
+
     } catch (err) {
         console.error("❌ Erreur send notification:", err);
         res.status(500).json({ error: err.message });
     }
 });
+
 
 // Route pour sauvegarder le token push
 app.post('/api/save-push-token', async (req, res) => {
@@ -157,39 +156,32 @@ app.post('/api/save-push-token', async (req, res) => {
     }
 });
 
-// Route push unifiée (Firebase Admin)
-app.post('/api/send-push', async (req, res) => {
+app.post('/api/send-push', middleware(["COORDINATEUR"]), async (req, res) => {
     try {
-        const { token, title, body, url } = req.body;
-        
-        if (!token || !title) {
-            return res.status(400).json({ error: "Token et titre requis" });
+        const { userId, title, body, url } = req.body;
+
+        if (!userId || !title) {
+            return res.status(400).json({
+                error: "userId et title sont requis"
+            });
         }
 
-        const { sendPush } = require("./firebaseAdmin");
-        
-        await sendPush(token, title, body);
-        
-        const { data: user } = await supabase
-            .from("profiles")
-            .select("id")
-            .eq("push_token", token)
-            .single();
-        
-        if (user) {
-            await supabase.from("notifications").insert([{
-                user_id: user.id,
-                title: title,
-                message: body,
-                type: "push",
-                url: url || "/",
-                read: false,
-                created_at: new Date()
-            }]);
+        const ok = await createNotification(
+            userId,
+            title,
+            body || "Nouvelle notification",
+            "push",
+            url || "/"
+        );
+
+        if (!ok) {
+            return res.status(500).json({
+                error: "Push non envoyée"
+            });
         }
-        
+
         res.json({ success: true });
-        
+
     } catch (err) {
         console.error("❌ Erreur send-push:", err);
         res.status(500).json({ error: err.message });
