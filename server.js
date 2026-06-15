@@ -10,6 +10,7 @@ const supabase = require("./supabaseClient");
 const middleware = require("./middleware");
 
 const app = express();
+app.set("trust proxy", 1);
 
 // ============================================================
 // CONFIGURATION MULTER
