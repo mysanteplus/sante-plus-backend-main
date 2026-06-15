@@ -14,6 +14,10 @@ webpush.setVapidDetails(
  * 🔔 ENVOYER UNE NOTIFICATION PUSH (VIA FIREBASE UNIQUEMENT)
  */
 
+
+/**
+ * 🔔 ENVOYER UNE NOTIFICATION PUSH (VIA FIREBASE ADMIN DIRECTEMENT)
+ */
 async function sendPushNotification(userId, title, message, url = "/") {
   try {
     // 1. Récupérer le token FCM depuis la base
@@ -28,14 +32,15 @@ async function sendPushNotification(userId, title, message, url = "/") {
       return false;
     }
 
-    console.log(`📨 Envoi push à ${userId} avec token: ${profile.push_token.substring(0, 20)}...`);
+    console.log(`📨 Envoi push à ${userId}`);
+    console.log(`🔑 Token: ${profile.push_token.substring(0, 30)}...`);
 
-    // 2. Utiliser firebase-admin directement (pas d'appel HTTP)
+    // 2. Utiliser firebase-admin directement
     const { sendPush } = require("./firebaseAdmin");
     
-    await sendPush(profile.push_token, title, message);
+    const result = await sendPush(profile.push_token, title, message);
     
-    console.log(`✅ Notification FCM envoyée à ${userId}`);
+    console.log(`✅ Notification envoyée à ${userId}`);
     return true;
 
   } catch (err) {
@@ -43,6 +48,8 @@ async function sendPushNotification(userId, title, message, url = "/") {
     return false;
   }
 }
+
+
 /**
  * 📧 ENVOYER UN EMAIL VIA BREVO API
  */
