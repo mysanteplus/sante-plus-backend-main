@@ -253,13 +253,34 @@ app.use("/api/admin-users", adminUsersRoutes);
 startCronJobs();
 
 
- app.get("/api/test-notification/:userId", async (req, res) => {
+// ============================================================
+// ROUTE DE TEST POUR NOTIFICATIONS PUSH
+// ============================================================
+app.get("/api/test-notification/:userId", async (req, res) => {
   const { userId } = req.params;
   const { sendPushNotification } = require("./utils");
   
-  await sendPushNotification(userId, "🧪 Test", "Notification de test !", "/#home");
+  console.log(`📨 Envoi d'une notification test à l'utilisateur: ${userId}`);
   
-  res.json({ message: "Notification envoyée à l'utilisateur " + userId });
+  try {
+    await sendPushNotification(
+      userId,
+      "🧪 Test notification",
+      "Ceci est un test depuis le backend ! 🚀",
+      "/#home"
+    );
+    
+    res.json({ 
+      success: true, 
+      message: `Notification envoyée à l'utilisateur ${userId}` 
+    });
+  } catch (err) {
+    console.error("❌ Erreur envoi test:", err);
+    res.status(500).json({ 
+      success: false, 
+      error: err.message 
+    });
+  }
 });
 
 const PORT = process.env.PORT || 4000;
