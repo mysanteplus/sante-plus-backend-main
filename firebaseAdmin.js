@@ -1,14 +1,9 @@
-// backend/firebaseAdmin.js
 const admin = require("firebase-admin");
 
 if (!admin.apps.length) {
   const privateKey = process.env.FIREBASE_PRIVATE_KEY
     ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n")
     : undefined;
-
-  if (!process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL || !privateKey) {
-    console.error("❌ Variables Firebase Admin manquantes");
-  }
 
   admin.initializeApp({
     credential: admin.credential.cert({
@@ -30,24 +25,18 @@ async function sendPush(token, title, body, url = "/") {
       return null;
     }
 
-    const finalUrl = url || "/";
-
-    console.log(`📨 Envoi push à token: ${token.substring(0, 30)}...`);
-
     const message = {
       token,
 
-      // Important pour que le service worker puisse lire les données
+      notification: {
+        title: title || "Santé Plus",
+        body: body || "Nouvelle notification"
+      },
+
       data: {
         title: String(title || "Santé Plus"),
         body: String(body || "Nouvelle notification"),
-        url: String(finalUrl)
-      },
-
-      // Notification système standard
-      notification: {
-        title: String(title || "Santé Plus"),
-        body: String(body || "Nouvelle notification")
+        url: String(url || "/")
       },
 
       webpush: {
@@ -56,49 +45,20 @@ async function sendPush(token, title, body, url = "/") {
           TTL: "86400"
         },
         notification: {
-          title: String(title || "Santé Plus"),
-          body: String(body || "Nouvelle notification"),
+          title: title || "Santé Plus",
+          body: body || "Nouvelle notification",
           icon: "https://app.mysanteplus.com/assets/images/logo-general-icon.png",
           badge: "https://app.mysanteplus.com/assets/images/logo-general-icon.png",
           requireInteraction: true,
           renotify: true,
           tag: `sante-plus-${Date.now()}`,
           vibrate: [200, 100, 200],
-          actions: [
-            { action: "open", title: "Ouvrir" }
-          ],
           data: {
-            url: finalUrl
+            url: url || "/"
           }
         },
         fcmOptions: {
-          link: `https://app.mysanteplus.com${finalUrl.startsWith("/") ? finalUrl : "/" + finalUrl}`
-        }
-      },
-
-      android: {
-        priority: "high",
-        notification: {
-          sound: "default",
-          channelId: "sante_plus_channel",
-          priority: "max",
-          visibility: "public"
-        }
-      },
-
-      apns: {
-        headers: {
-          "apns-priority": "10"
-        },
-        payload: {
-          aps: {
-            alert: {
-              title: String(title || "Santé Plus"),
-              body: String(body || "Nouvelle notification")
-            },
-            sound: "default",
-            badge: 1
-          }
+          link: `https://app.mysanteplus.com${url || "/"}`
         }
       }
     };
@@ -110,23 +70,18 @@ async function sendPush(token, title, body, url = "/") {
   } catch (err) {
     console.error("❌ Erreur sendPush:", err.code, err.message);
 
-    const invalidCodes = [
-      "messaging/invalid-registration-token",
-      "messaging/registration-token-not-registered"
-    ];
+    if (
+      err.code === "messaging/invalid-registration-token" ||
+      err.code === "messaging/registration-token-not-registered"
+    ) {
+      const supabase = require("./supabaseClient");
 
-    if (invalidCodes.includes(err.code)) {
-      try {
-        const supabase = require("./supabaseClient");
-        await supabase
-          .from("profiles")
-          .update({ push_token: null })
-          .eq("push_token", token);
+      await supabase
+        .from("profiles")
+        .update({ push_token: null })
+        .eq("push_token", token);
 
-        console.log("🗑️ Token invalide supprimé de la base");
-      } catch (cleanErr) {
-        console.error("❌ Erreur suppression token invalide:", cleanErr.message);
-      }
+      console.log("🗑️ Token invalide supprimé");
     }
 
     throw err;
