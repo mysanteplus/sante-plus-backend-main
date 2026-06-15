@@ -428,6 +428,25 @@ router.delete("/user/:id", middleware(["COORDINATEUR"]), async (req, res) => {
 });
 
 // ============================================================
+// 📋 LISTER TOUS LES ADMINISTRATEURS (PUBLIC)
+// ============================================================
+router.get("/admins", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, email, nom, prenom, telephone, created_at, statut_validation")
+      .eq("role", "COORDINATEUR")
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) {
+    console.error("❌ Erreur liste admins:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
 // UTILITAIRE: GÉNÉRER MOT DE PASSE ALÉATOIRE
 // ============================================================
 function generateRandomPassword(length = 10) {
