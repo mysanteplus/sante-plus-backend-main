@@ -1,4 +1,4 @@
- const admin = require("firebase-admin");
+const admin = require("firebase-admin");
 
 if (!admin.apps.length) {
   const privateKey = process.env.FIREBASE_PRIVATE_KEY 
@@ -19,13 +19,34 @@ const messaging = admin.messaging();
 
 async function sendPush(token, title, body) {
     try {
-        await messaging.send({
-            token,
-            notification: { title, body }
+        const response = await messaging.send({
+            token: token,
+            notification: { 
+                title: title, 
+                body: body,
+                sound: "default"
+            },
+            android: {
+                priority: "high",
+                notification: {
+                    sound: "default",
+                    channelId: "sante_plus_channel"
+                }
+            },
+            apns: {
+                payload: {
+                    aps: {
+                        sound: "default",
+                        badge: 1
+                    }
+                }
+            }
         });
-        console.log("🔔 Notification envoyée");
+        console.log("🔔 Notification envoyée, ID:", response);
+        return response;
     } catch (err) {
-        console.error("❌ Erreur push:", err);
+        console.error("❌ Erreur sendPush:", err.message);
+        throw err;
     }
 }
 
