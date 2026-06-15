@@ -739,26 +739,6 @@ router.get("/subscription-status", middleware(["FAMILLE"]), async (req, res) => 
     }
 });
 
-// ============================================================
-// 📄 RÉCUPÉRER UNE FACTURE PAR ID (DOIT ÊTRE EN DERNIER)
-// ============================================================
-
-router.get("/:id", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
-    const { id } = req.params;
-    
-    try {
-        const { data, error } = await supabase
-            .from("abonnements")
-            .select("*")
-            .eq("id", id)
-            .single();
-        
-        if (error) throw error;
-        res.json(data);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
 
 // ============================================================
 // 📄 GÉNÉRER UNE FACTURE (détails)
@@ -866,5 +846,29 @@ router.get("/invoice-data/:id", middleware(["COORDINATEUR", "FAMILLE"]), async (
         res.status(500).json({ error: err.message });
     }
 });
+
+
+
+// ============================================================
+// 📄 RÉCUPÉRER UNE FACTURE PAR ID (DOIT ÊTRE EN DERNIER)
+// ============================================================
+
+router.get("/:id", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
+    const { id } = req.params;
+    
+    try {
+        const { data, error } = await supabase
+            .from("abonnements")
+            .select("*")
+            .eq("id", id)
+            .single();
+        
+        if (error) throw error;
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 
 module.exports = router;
