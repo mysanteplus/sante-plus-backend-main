@@ -1,17 +1,5 @@
 const axios = require("axios");
-const webpush = require("web-push");
 const supabase = require("./supabaseClient");
-
-// Configuration du moteur Push avec les clés de sécurité VAPID
-webpush.setVapidDetails(
-  "mailto: info@mysanteplus.com",
-  process.env.VAPID_PUBLIC_KEY,
-  process.env.VAPID_PRIVATE_KEY,
-);
-
-/**
- * 🔔 ENVOYER UNE NOTIFICATION PUSH
- */
 
 /**
  * 🔔 ENVOYER UNE NOTIFICATION PUSH FIREBASE UNIQUEMENT
