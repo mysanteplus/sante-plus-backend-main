@@ -9,17 +9,12 @@ webpush.setVapidDetails(
   process.env.VAPID_PRIVATE_KEY,
 );
 
-
-/**
- * 🔔 ENVOYER UNE NOTIFICATION PUSH (VIA FIREBASE UNIQUEMENT)
- */
-
 /**
  * 🔔 ENVOYER UNE NOTIFICATION PUSH
  */
+
 async function sendPushNotification(userId, title, message, url = "/") {
   try {
-    // Récupérer le token
     const { data: profile, error } = await supabase
       .from("profiles")
       .select("push_token")
@@ -30,39 +25,40 @@ async function sendPushNotification(userId, title, message, url = "/") {
       console.log(`❌ Erreur récupération profil ${userId}:`, error.message);
       return false;
     }
-    
+
     if (!profile?.push_token) {
       console.log(`📭 Pas de token FCM pour l'utilisateur ${userId}`);
       return false;
     }
 
     console.log(`📨 Envoi push à ${userId}`);
-    
-    // Utiliser firebase-admin
+
     const { sendPush } = require("./firebaseAdmin");
-    await sendPush(profile.push_token, title, message);
-    
-    // Sauvegarder la notification dans la base
+    await sendPush(profile.push_token, title, message, url);
+
     await supabase
       .from("notifications")
       .insert([{
         user_id: userId,
-        title: title,
-        message: message,
+        title,
+        message,
         type: "push",
-        url: url,
+        url: url || "/",
         read: false,
         created_at: new Date()
       }]);
-    
+
     console.log(`✅ Notification envoyée et sauvegardée pour ${userId}`);
     return true;
 
   } catch (err) {
-    console.error("❌ Erreur sendPushNotification:", err.message);
+    console.error("❌ Erreur sendPushNotification:", err.code || "", err.message);
     return false;
   }
 }
+
+
+
 /**
  * 📧 ENVOYER UN EMAIL VIA BREVO API
  */
