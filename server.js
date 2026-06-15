@@ -252,6 +252,16 @@ app.use("/api/admin-users", adminUsersRoutes);
 // ============================================================
 startCronJobs();
 
+
+ app.get("/api/test-notification/:userId", async (req, res) => {
+  const { userId } = req.params;
+  const { sendPushNotification } = require("./utils");
+  
+  await sendPushNotification(userId, "🧪 Test", "Notification de test !", "/#home");
+  
+  res.json({ message: "Notification envoyée à l'utilisateur " + userId });
+});
+
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
     console.log(`✅ Serveur démarré sur le port ${PORT}`);
