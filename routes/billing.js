@@ -4,7 +4,7 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
 const middleware = require("../middleware");
-const { sendPushNotification, getDurationFromPack, calculateSubscriptionEndDate, checkActiveSubscription } = require("../utils");
+const { getDurationFromPack, calculateSubscriptionEndDate, checkActiveSubscription } = require("../utils");
 const { createNotification } = require("./notifications");
 
 // ============================================================
@@ -157,14 +157,15 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
                 .eq("id", patientId)
                 .single();
             
-            if (patient?.famille_user_id) {
-                await sendPushNotification(
-                    patient.famille_user_id,
-                    "💎 Abonnement activé",
-                    `Paiement reçu pour ${patient.nom_complet}. Valable ${durationMonths} mois.`,
-                    "/#dashboard"
-                );
-            }
+                if (patient?.famille_user_id) {
+                    await createNotification(
+                        patient.famille_user_id,
+                        "💎 Abonnement activé",
+                        `Paiement reçu pour ${patient.nom_complet}. Valable ${durationMonths} mois.`,
+                        "payment",
+                        "/#dashboard"
+                    );
+                }
             
             console.log(`✅ Abonnement ${durationMonths} mois créé`);
             
@@ -270,17 +271,10 @@ router.post("/pay", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) =>
                 .eq("id", abonnement_id);
 
             if (abo.patient.famille_user_id) {
-                await sendPushNotification(
+                await createNotification(
                     abo.patient.famille_user_id,
                     "✅ Paiement validé",
                     `Le paiement de ${montant} CFA pour ${abo.patient.nom_complet} a été reçu.`,
-                    "/#billing"
-                );
-                
-                await createNotification(
-                    abo.patient.famille_user_id,
-                    "💳 Paiement reçu",
-                    `Votre paiement de ${montant} CFA a été confirmé.`,
                     "payment",
                     "/#billing"
                 );
