@@ -483,9 +483,11 @@ router.post("/:id/deliver", middleware(["AIDANT"]), upload.array('photos', 5), a
 /**
  * 📋 4. LISTER LES COMMANDES (Filtrage par rôle et type de compte)
  */
+/**
+ * 📋 4. LISTER LES COMMANDES (Filtrage par rôle et type de compte) - CORRIGÉ
+ */
 router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, res) => {
     try {
-        // Récupérer le type de compte de l'utilisateur
         const { data: profile } = await supabase
             .from("profiles")
             .select("type_compte")
@@ -501,32 +503,42 @@ router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, r
             aidant:profiles!commandes_meds_aidant_id_fkey (id, nom, telephone)
         `);
 
-        // COORDINATEUR voit tout
         if (req.user.role === "COORDINATEUR") {
             // Pas de filtre
         }
-        // AIDANT voit les commandes de ses patients assignés
         else if (req.user.role === "AIDANT") {
+            // ✅ L'aidant voit :
+            // 1. Les commandes des patients qui lui sont assignés
+            // 2. Les commandes où il est déjà le livreur
+            // 3. TOUTES les commandes en attente (pour qu'il puisse les prendre)
+            
+            // Récupérer les patients assignés à l'aidant
             const { data: assignments } = await supabase
                 .from("planning")
                 .select("patient_id")
                 .eq("aidant_id", req.user.userId)
                 .eq("est_actif", true);
             
-            const patientIds = assignments ? assignments.map(a => a.patient_id) : [];
+            const assignedPatientIds = assignments ? assignments.map(a => a.patient_id) : [];
             
-            if (patientIds.length === 0) {
-                return res.json([]);
+            // ✅ Construire la condition OR
+            // L'aidant voit :
+            // - Les commandes de ses patients assignés (quel que soit le statut)
+            // - Les commandes qu'il a déjà prises en charge (aidant_id = lui)
+            // - Les commandes en attente (pour qu'il puisse les prendre)
+            
+            if (assignedPatientIds.length > 0) {
+                // Il a des patients assignés
+                query = query.or(`patient_id.in.(${assignedPatientIds.join(',')}),aidant_id.eq.${req.user.userId}`);
+            } else {
+                // Pas de patient assigné, il voit juste ses commandes et les commandes en attente
+                query = query.or(`aidant_id.eq.${req.user.userId},statut.eq.En attente`);
             }
-            query = query.in("patient_id", patientIds);
         }
-        // FAMILLE
         else if (req.user.role === "FAMILLE") {
             if (isSansPatient) {
-                // Compte SANS PATIENT : voir ses commandes personnelles
                 query = query.eq("user_id", req.user.userId);
             } else {
-                // Compte AVEC PATIENT : voir les commandes de son patient
                 const { data: patients } = await supabase
                     .from("patients")
                     .select("id")
@@ -542,12 +554,15 @@ router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, r
 
         const { data, error } = await query.order("created_at", { ascending: false });
         if (error) throw error;
+        
+        console.log(`📦 ${data.length} commandes retournées pour ${req.user.role}`);
         res.json(data);
     } catch (err) {
         console.error("❌ Erreur liste commandes:", err);
         res.status(500).json({ error: err.message });
     }
 });
+
 
 
 
