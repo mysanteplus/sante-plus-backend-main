@@ -61,6 +61,18 @@ function getWelcomeEmail(email, password, nom, prenom, role) {
 }
 
 // ============================================================
+// UTILITAIRE: GÉNÉRER MOT DE PASSE ALÉATOIRE
+// ============================================================
+function generateRandomPassword(length = 10) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%';
+  let password = '';
+  for (let i = 0; i < length; i++) {
+    password += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return password;
+}
+
+// ============================================================
 // 1. VÉRIFIER SI DES ADMINS EXISTENT
 // ============================================================
 router.get("/has-admin", async (req, res) => {
@@ -80,7 +92,7 @@ router.get("/has-admin", async (req, res) => {
 });
 
 // ============================================================
-// 2. CRÉER LE PREMIER ADMINISTRATEUR
+// 2. CRÉER UN ADMINISTRATEUR (PUBLIC - SANS BLOCAGE)
 // ============================================================
 router.post("/create-first-admin", async (req, res) => {
   const { email, password, nom, prenom, telephone } = req.body;
@@ -90,14 +102,15 @@ router.post("/create-first-admin", async (req, res) => {
   }
 
   try {
-    const { data: existingAdmins } = await supabase
+    // Vérifier si l'email existe déjà
+    const { data: existingUser } = await supabase
       .from("profiles")
       .select("id")
-      .eq("role", "COORDINATEUR")
-      .limit(1);
+      .eq("email", email)
+      .maybeSingle();
 
-    if (existingAdmins && existingAdmins.length > 0) {
-      return res.status(403).json({ error: "Un administrateur existe déjà" });
+    if (existingUser) {
+      return res.status(400).json({ error: "Un utilisateur avec cet email existe déjà" });
     }
 
     const { data: authUser, error: authErr } = await supabase.auth.admin.createUser({
@@ -140,7 +153,312 @@ router.post("/create-first-admin", async (req, res) => {
 });
 
 // ============================================================
-// 3. CRÉER UN UTILISATEUR (Admin)
+// 3. LISTER TOUS LES ADMINISTRATEURS (PUBLIC)
+// ============================================================
+router.get("/admins", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, email, nom, prenom, telephone, created_at, statut_validation")
+      .eq("role", "COORDINATEUR")
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) {
+    console.error("❌ Erreur liste admins:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 4. RÉCUPÉRER LES DÉTAILS D'UN ADMIN (AUTH REQUIRED)
+// ============================================================
+router.get("/admin/:id", middleware(["COORDINATEUR"]), async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", id)
+      .single();
+    
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 5. MODIFIER UN ADMINISTRATEUR (AUTH REQUIRED)
+// ============================================================
+router.put("/admin/:id", middleware(["COORDINATEUR"]), async (req, res) => {
+  const { id } = req.params;
+  const { nom, prenom, telephone, email } = req.body;
+  
+  try {
+    const updateData = {};
+    if (nom !== undefined) updateData.nom = nom;
+    if (prenom !== undefined) updateData.prenom = prenom;
+    if (telephone !== undefined) updateData.telephone = telephone;
+    if (email !== undefined) updateData.email = email;
+    
+    const { error } = await supabase
+      .from("profiles")
+      .update(updateData)
+      .eq("id", id);
+    
+    if (error) throw error;
+    res.json({ success: true, message: "Administrateur modifié avec succès" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 6. ACTIVER/DÉSACTIVER UN ADMINISTRATEUR (AUTH REQUIRED)
+// ============================================================
+router.patch("/admin/:id/toggle-status", middleware(["COORDINATEUR"]), async (req, res) => {
+  const { id } = req.params;
+  const { statut_validation } = req.body;
+  
+  try {
+    const { error } = await supabase
+      .from("profiles")
+      .update({ statut_validation: statut_validation })
+      .eq("id", id);
+    
+    if (error) throw error;
+    res.json({ 
+      success: true, 
+      message: statut_validation === "ACTIF" ? "Administrateur activé" : "Administrateur désactivé" 
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 7. RÉINITIALISER LE MOT DE PASSE D'UN ADMIN (AUTH REQUIRED)
+// ============================================================
+router.post("/admin/:id/reset-password", middleware(["COORDINATEUR"]), async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const newPassword = generateRandomPassword();
+    
+    const { error: updateErr } = await supabase.auth.admin.updateUserById(id, {
+      password: newPassword
+    });
+
+    if (updateErr) throw updateErr;
+
+    const { data: profile, error: profileErr } = await supabase
+      .from("profiles")
+      .select("email, nom, prenom")
+      .eq("id", id)
+      .single();
+
+    if (!profileErr && profile) {
+      const emailHtml = getWelcomeEmail(profile.email, newPassword, profile.nom, profile.prenom || "", "reset");
+      await sendEmailAPI(profile.email, "Réinitialisation de votre mot de passe", emailHtml);
+    }
+
+    res.json({ success: true, message: "Mot de passe réinitialisé et envoyé par email" });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 8. SUPPRIMER UN ADMINISTRATEUR (AUTH REQUIRED)
+// ============================================================
+router.delete("/admin/:id", middleware(["COORDINATEUR"]), async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const { error: profileErr } = await supabase
+      .from("profiles")
+      .delete()
+      .eq("id", id);
+
+    if (profileErr) throw profileErr;
+
+    const { error: authErr } = await supabase.auth.admin.deleteUser(id);
+    if (authErr) console.warn("Erreur suppression auth:", authErr.message);
+
+    res.json({ success: true, message: "Administrateur supprimé avec succès" });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 9. RÉCUPÉRER TOUS LES PROFILS (admin)
+// ============================================================
+router.get("/all-profiles", middleware(["COORDINATEUR"]), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 10. RÉCUPÉRER UN PROFIL COMPLET
+// ============================================================
+router.get("/profile/:id", middleware(["COORDINATEUR"]), async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const { data: profile, error: profileErr } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", id)
+      .single();
+    
+    if (profileErr) throw profileErr;
+    
+    let response = { ...profile };
+    
+    if (profile.role === "FAMILLE") {
+      const { data: patients, error: patientsErr } = await supabase
+        .from("patients")
+        .select("*")
+        .eq("famille_user_id", id);
+      
+      if (!patientsErr) response.patients = patients;
+    }
+    
+    if (profile.role === "AIDANT") {
+      const { data: assignments, error: assignErr } = await supabase
+        .from("planning")
+        .select(`
+          id,
+          patient_id,
+          patient:patients(id, nom_complet, adresse, formule),
+          date_prevue,
+          statut,
+          est_actif
+        `)
+        .eq("aidant_id", id)
+        .eq("est_actif", true);
+      
+      if (!assignErr) response.assignments = assignments;
+      
+      const { data: stats, error: statsErr } = await supabase
+        .from("visites")
+        .select("statut")
+        .eq("aidant_id", id);
+      
+      if (!statsErr) {
+        response.stats = {
+          total: stats.length,
+          validees: stats.filter(v => v.statut === "Validé").length,
+          en_attente: stats.filter(v => v.statut === "En attente").length
+        };
+      }
+    }
+    
+    res.json(response);
+    
+  } catch (err) {
+    console.error("❌ Erreur:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 11. METTRE À JOUR UN PROFIL
+// ============================================================
+router.put("/profile/:id", middleware(["COORDINATEUR"]), async (req, res) => {
+  const { id } = req.params;
+  const { nom, prenom, email, telephone, adresse, competences, disponibilites, statut_validation } = req.body;
+  
+  try {
+    const updateData = {};
+    if (nom !== undefined) updateData.nom = nom;
+    if (prenom !== undefined) updateData.prenom = prenom;
+    if (email !== undefined) updateData.email = email;
+    if (telephone !== undefined) updateData.telephone = telephone;
+    if (adresse !== undefined) updateData.adresse = adresse;
+    if (competences !== undefined) updateData.competences = competences;
+    if (disponibilites !== undefined) updateData.disponibilites = disponibilites;
+    if (statut_validation !== undefined) updateData.statut_validation = statut_validation;
+    
+    const { error } = await supabase
+      .from("profiles")
+      .update(updateData)
+      .eq("id", id);
+    
+    if (error) throw error;
+    res.json({ success: true });
+    
+  } catch (err) {
+    console.error("❌ Erreur mise à jour:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 12. RÉCUPÉRER UN PATIENT COMPLET
+// ============================================================
+router.get("/patient/:id", middleware(["COORDINATEUR"]), async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const { data: patient, error } = await supabase
+      .from("patients")
+      .select(`
+        *,
+        famille:famille_user_id(id, nom, prenom, email, telephone),
+        coordinateur:coordinateur_id(id, nom)
+      `)
+      .eq("id", id)
+      .single();
+    
+    if (error) throw error;
+    res.json(patient);
+    
+  } catch (err) {
+    console.error("❌ Erreur:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 13. RÉCUPÉRER TOUS LES PATIENTS (admin)
+// ============================================================
+router.get("/all-patients", middleware(["COORDINATEUR"]), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("patients")
+      .select(`
+        *,
+        famille:famille_user_id(id, nom, prenom, email)
+      `)
+      .order("created_at", { ascending: false });
+    
+    if (error) throw error;
+    res.json(data);
+    
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 14. CRÉER UN UTILISATEUR (Admin)
 // ============================================================
 router.post("/create-user", middleware(["COORDINATEUR"]), async (req, res) => {
   const { email, password, nom, prenom, telephone, adresse, role, competences, disponibilites } = req.body;
@@ -205,167 +523,7 @@ router.post("/create-user", middleware(["COORDINATEUR"]), async (req, res) => {
 });
 
 // ============================================================
-// 4. RÉCUPÉRER TOUS LES PROFILS (admin)
-// ============================================================
-router.get("/all-profiles", middleware(["COORDINATEUR"]), async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) throw error;
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ============================================================
-// 5. RÉCUPÉRER UN PROFIL COMPLET
-// ============================================================
-router.get("/profile/:id", middleware(["COORDINATEUR"]), async (req, res) => {
-  const { id } = req.params;
-  
-  try {
-    const { data: profile, error: profileErr } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", id)
-      .single();
-    
-    if (profileErr) throw profileErr;
-    
-    let response = { ...profile };
-    
-    if (profile.role === "FAMILLE") {
-      const { data: patients, error: patientsErr } = await supabase
-        .from("patients")
-        .select("*")
-        .eq("famille_user_id", id);
-      
-      if (!patientsErr) response.patients = patients;
-    }
-    
-    if (profile.role === "AIDANT") {
-      const { data: assignments, error: assignErr } = await supabase
-        .from("planning")
-        .select(`
-          id,
-          patient_id,
-          patient:patients(id, nom_complet, adresse, formule),
-          date_prevue,
-          statut,
-          est_actif
-        `)
-        .eq("aidant_id", id)
-        .eq("est_actif", true);
-      
-      if (!assignErr) response.assignments = assignments;
-      
-      const { data: stats, error: statsErr } = await supabase
-        .from("visites")
-        .select("statut")
-        .eq("aidant_id", id);
-      
-      if (!statsErr) {
-        response.stats = {
-          total: stats.length,
-          validees: stats.filter(v => v.statut === "Validé").length,
-          en_attente: stats.filter(v => v.statut === "En attente").length
-        };
-      }
-    }
-    
-    res.json(response);
-    
-  } catch (err) {
-    console.error("❌ Erreur:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ============================================================
-// 6. METTRE À JOUR UN PROFIL
-// ============================================================
-router.put("/profile/:id", middleware(["COORDINATEUR"]), async (req, res) => {
-  const { id } = req.params;
-  const { nom, prenom, email, telephone, adresse, competences, disponibilites, statut_validation } = req.body;
-  
-  try {
-    const updateData = {};
-    if (nom !== undefined) updateData.nom = nom;
-    if (prenom !== undefined) updateData.prenom = prenom;
-    if (email !== undefined) updateData.email = email;
-    if (telephone !== undefined) updateData.telephone = telephone;
-    if (adresse !== undefined) updateData.adresse = adresse;
-    if (competences !== undefined) updateData.competences = competences;
-    if (disponibilites !== undefined) updateData.disponibilites = disponibilites;
-    if (statut_validation !== undefined) updateData.statut_validation = statut_validation;
-    
-    const { error } = await supabase
-      .from("profiles")
-      .update(updateData)
-      .eq("id", id);
-    
-    if (error) throw error;
-    res.json({ success: true });
-    
-  } catch (err) {
-    console.error("❌ Erreur mise à jour:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ============================================================
-// 7. RÉCUPÉRER UN PATIENT COMPLET
-// ============================================================
-router.get("/patient/:id", middleware(["COORDINATEUR"]), async (req, res) => {
-  const { id } = req.params;
-  
-  try {
-    const { data: patient, error } = await supabase
-      .from("patients")
-      .select(`
-        *,
-        famille:famille_user_id(id, nom, prenom, email, telephone),
-        coordinateur:coordinateur_id(id, nom)
-      `)
-      .eq("id", id)
-      .single();
-    
-    if (error) throw error;
-    res.json(patient);
-    
-  } catch (err) {
-    console.error("❌ Erreur:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ============================================================
-// 8. RÉCUPÉRER TOUS LES PATIENTS (admin)
-// ============================================================
-router.get("/all-patients", middleware(["COORDINATEUR"]), async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from("patients")
-      .select(`
-        *,
-        famille:famille_user_id(id, nom, prenom, email)
-      `)
-      .order("created_at", { ascending: false });
-    
-    if (error) throw error;
-    res.json(data);
-    
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ============================================================
-// 9. RÉINITIALISER LE MOT DE PASSE
+// 15. RÉINITIALISER LE MOT DE PASSE (Générique)
 // ============================================================
 router.post("/reset-password", middleware(["COORDINATEUR"]), async (req, res) => {
   const { userId } = req.body;
@@ -403,7 +561,7 @@ router.post("/reset-password", middleware(["COORDINATEUR"]), async (req, res) =>
 });
 
 // ============================================================
-// 10. SUPPRIMER UN UTILISATEUR
+// 16. SUPPRIMER UN UTILISATEUR (Générique)
 // ============================================================
 router.delete("/user/:id", middleware(["COORDINATEUR"]), async (req, res) => {
   const { id } = req.params;
@@ -426,36 +584,5 @@ router.delete("/user/:id", middleware(["COORDINATEUR"]), async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-// ============================================================
-// 📋 LISTER TOUS LES ADMINISTRATEURS (PUBLIC)
-// ============================================================
-router.get("/admins", async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id, email, nom, prenom, telephone, created_at, statut_validation")
-      .eq("role", "COORDINATEUR")
-      .order("created_at", { ascending: false });
-
-    if (error) throw error;
-    res.json(data || []);
-  } catch (err) {
-    console.error("❌ Erreur liste admins:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ============================================================
-// UTILITAIRE: GÉNÉRER MOT DE PASSE ALÉATOIRE
-// ============================================================
-function generateRandomPassword(length = 10) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%';
-  let password = '';
-  for (let i = 0; i < length; i++) {
-    password += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return password;
-}
 
 module.exports = router;
