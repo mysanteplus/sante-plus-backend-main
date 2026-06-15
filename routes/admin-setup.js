@@ -68,7 +68,7 @@ function getWelcomeEmail(nom, prenom, email, password, role, url) {
 }
 
 // ============================================================
-// 🚀 CRÉER UN ADMINISTRATEUR (accessible sans auth pour l'installation)
+// 🚀 CRÉER UN ADMINISTRATEUR
 // ============================================================
 router.post("/create-first-admin", async (req, res) => {
   const { email, password, nom, prenom, telephone } = req.body;
@@ -78,8 +78,6 @@ router.post("/create-first-admin", async (req, res) => {
   }
 
   try {
-    // ✅ CRÉATION SIMPLE - PAS DE VÉRIFICATION POUR PERMETTRE PLUSIEURS ADMINS
-    // Seule vérification : email unique
     const { data: existingUser } = await supabase
       .from("profiles")
       .select("id")
@@ -90,7 +88,6 @@ router.post("/create-first-admin", async (req, res) => {
       return res.status(400).json({ error: "Un utilisateur avec cet email existe déjà" });
     }
 
-    // Créer l'utilisateur dans Supabase Auth
     const { data: authUser, error: authErr } = await supabase.auth.admin.createUser({
       email: email,
       password: password,
@@ -104,7 +101,6 @@ router.post("/create-first-admin", async (req, res) => {
 
     if (authErr) throw authErr;
 
-    // Créer le profil
     const { error: profileErr } = await supabase
       .from("profiles")
       .insert({
@@ -133,7 +129,7 @@ router.post("/create-first-admin", async (req, res) => {
 });
 
 // ============================================================
-// 🔍 VÉRIFIER SI DES ADMINS EXISTENT (juste pour info)
+// 🔍 VÉRIFIER SI DES ADMINS EXISTENT
 // ============================================================
 router.get("/has-admin", async (req, res) => {
   try {
@@ -144,7 +140,6 @@ router.get("/has-admin", async (req, res) => {
       .limit(1);
 
     if (error) throw error;
-    
     res.json({ hasAdmin: data && data.length > 0 });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -158,7 +153,7 @@ router.get("/admins", async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("profiles")
-      .select("id, email, nom, prenom, telephone, created_at")
+      .select("id, email, nom, prenom, telephone, created_at, statut_validation")
       .eq("role", "COORDINATEUR")
       .order("created_at", { ascending: false });
 
@@ -170,15 +165,18 @@ router.get("/admins", async (req, res) => {
 });
 
 // ============================================================
-// 📋 LISTER LES UTILISATEURS (Admin uniquement)
+// 👁️ VOIR DÉTAILS D'UN ADMIN
 // ============================================================
-router.get("/users", middleware(["COORDINATEUR"]), async (req, res) => {
+router.get("/admin/:id", middleware(["COORDINATEUR"]), async (req, res) => {
+  const { id } = req.params;
+  
   try {
     const { data, error } = await supabase
       .from("profiles")
       .select("*")
-      .order("created_at", { ascending: false });
-
+      .eq("id", id)
+      .single();
+    
     if (error) throw error;
     res.json(data);
   } catch (err) {
@@ -187,88 +185,50 @@ router.get("/users", middleware(["COORDINATEUR"]), async (req, res) => {
 });
 
 // ============================================================
-// 👤 CRÉER UN UTILISATEUR (Admin uniquement)
+// ✏️ MODIFIER UN ADMINISTRATEUR
 // ============================================================
-router.post("/create-user", middleware(["COORDINATEUR"]), async (req, res) => {
-  const { 
-    email, 
-    nom, 
-    prenom, 
-    telephone, 
-    adresse, 
-    role,
-    competences,
-    disponibilites
-  } = req.body;
-
-  if (!email || !nom || !role) {
-    return res.status(400).json({ error: "Email, nom et rôle sont requis" });
-  }
-
+router.put("/admin/:id", middleware(["COORDINATEUR"]), async (req, res) => {
+  const { id } = req.params;
+  const { nom, prenom, telephone, email } = req.body;
+  
   try {
-    const { data: existing } = await supabase
+    const updateData = {};
+    if (nom !== undefined) updateData.nom = nom;
+    if (prenom !== undefined) updateData.prenom = prenom;
+    if (telephone !== undefined) updateData.telephone = telephone;
+    if (email !== undefined) updateData.email = email;
+    
+    const { error } = await supabase
       .from("profiles")
-      .select("id")
-      .eq("email", email)
-      .maybeSingle();
-
-    if (existing) {
-      return res.status(400).json({ error: "Un utilisateur avec cet email existe déjà" });
-    }
-
-    const plainPassword = generateRandomPassword();
+      .update(updateData)
+      .eq("id", id);
     
-    const { data: authUser, error: authErr } = await supabase.auth.admin.createUser({
-      email: email,
-      password: plainPassword,
-      email_confirm: true,
-      user_metadata: {
-        nom: nom,
-        prenom: prenom || "",
-        role: role
-      }
-    });
+    if (error) throw error;
+    res.json({ success: true, message: "Administrateur modifié avec succès" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-    if (authErr) throw authErr;
-
-    const { error: profileErr } = await supabase
+// ============================================================
+// 🔒 DÉSACTIVER/ACTIVER UN ADMINISTRATEUR
+// ============================================================
+router.patch("/admin/:id/toggle-status", middleware(["COORDINATEUR"]), async (req, res) => {
+  const { id } = req.params;
+  const { statut_validation } = req.body;
+  
+  try {
+    const { error } = await supabase
       .from("profiles")
-      .insert({
-        id: authUser.user.id,
-        email: email,
-        nom: nom,
-        prenom: prenom || null,
-        telephone: telephone || null,
-        adresse: adresse || null,
-        role: role,
-        statut_validation: "ACTIF",
-        competences: competences || [],
-        disponibilites: disponibilites || null
-      });
-
-    if (profileErr) throw profileErr;
-
-    const frontendUrl = process.env.FRONTEND_URL;
-    const emailHtml = getWelcomeEmail(nom, prenom || "", email, plainPassword, role, frontendUrl);
+      .update({ statut_validation: statut_validation })
+      .eq("id", id);
     
-    await sendEmailAPI(email, "Bienvenue sur Santé Plus Services", emailHtml);
-
-    console.log(`✅ Utilisateur créé: ${email} (${role})`);
-    
+    if (error) throw error;
     res.json({ 
       success: true, 
-      message: `Utilisateur ${role} créé avec succès`,
-      user: {
-        id: authUser.user.id,
-        email,
-        nom,
-        prenom,
-        role
-      }
+      message: statut_validation === "ACTIF" ? "Administrateur activé" : "Administrateur désactivé" 
     });
-
   } catch (err) {
-    console.error("❌ Erreur création utilisateur:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -276,17 +236,13 @@ router.post("/create-user", middleware(["COORDINATEUR"]), async (req, res) => {
 // ============================================================
 // 🔄 RÉINITIALISER LE MOT DE PASSE
 // ============================================================
-router.post("/reset-password", middleware(["COORDINATEUR"]), async (req, res) => {
-  const { userId } = req.body;
-
-  if (!userId) {
-    return res.status(400).json({ error: "userId requis" });
-  }
+router.post("/admin/:id/reset-password", middleware(["COORDINATEUR"]), async (req, res) => {
+  const { id } = req.params;
 
   try {
     const newPassword = generateRandomPassword();
     
-    const { error: updateErr } = await supabase.auth.admin.updateUserById(userId, {
+    const { error: updateErr } = await supabase.auth.admin.updateUserById(id, {
       password: newPassword
     });
 
@@ -295,7 +251,7 @@ router.post("/reset-password", middleware(["COORDINATEUR"]), async (req, res) =>
     const { data: profile, error: profileErr } = await supabase
       .from("profiles")
       .select("email, nom, prenom")
-      .eq("id", userId)
+      .eq("id", id)
       .single();
 
     if (!profileErr && profile) {
@@ -312,9 +268,9 @@ router.post("/reset-password", middleware(["COORDINATEUR"]), async (req, res) =>
 });
 
 // ============================================================
-// 🗑️ SUPPRIMER UN UTILISATEUR
+// 🗑️ SUPPRIMER UN ADMINISTRATEUR
 // ============================================================
-router.delete("/user/:id", middleware(["COORDINATEUR"]), async (req, res) => {
+router.delete("/admin/:id", middleware(["COORDINATEUR"]), async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -326,9 +282,9 @@ router.delete("/user/:id", middleware(["COORDINATEUR"]), async (req, res) => {
     if (profileErr) throw profileErr;
 
     const { error: authErr } = await supabase.auth.admin.deleteUser(id);
-    if (authErr) console.warn("Erreur suppression auth (peut être ignorée):", authErr.message);
+    if (authErr) console.warn("Erreur suppression auth:", authErr.message);
 
-    res.json({ success: true, message: "Utilisateur supprimé" });
+    res.json({ success: true, message: "Administrateur supprimé avec succès" });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
