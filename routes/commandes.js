@@ -115,11 +115,27 @@ router.post("/add", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) =>
     }
 });
 
- router.post("/accept", middleware(["AIDANT"]), async (req, res) => {
+router.post("/accept", middleware(["AIDANT"]), async (req, res) => {
     const { commandeId } = req.body;
     
+    console.log(`🔵 Aidant ${req.user.userId} tente de prendre commande ${commandeId}`);
+    
     try {
-        const { data: commande, error } = await supabase
+        const { data: commande, error: checkErr } = await supabase
+            .from("commandes_meds")
+            .select("id, statut, patient_id")
+            .eq("id", commandeId)
+            .single();
+        
+        if (checkErr || !commande) {
+            return res.status(404).json({ error: "Commande introuvable" });
+        }
+        
+        if (commande.statut !== "En attente") {
+            return res.status(400).json({ error: "Cette commande n'est plus disponible" });
+        }
+        
+        const { data: updated, error } = await supabase
             .from("commandes_meds")
             .update({
                 aidant_id: req.user.userId,
@@ -131,38 +147,35 @@ router.post("/add", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) =>
         
         if (error) throw error;
         
-        // Notifier la famille
-        if (commande.patient.famille_user_id) {
-            sendPushNotification(
-                commande.patient.famille_user_id,
-                "🚚 Commande en cours",
-                `${commande.patient.nom_complet} - Un livreur a pris votre commande en charge.`,
-                "/#commandes"
-            );
-        }
-        
-        res.json({ status: "success" });
-
-
-                // Après avoir créé la commande
-
         const channel = getRealtimeChannel();
         await channel.send({
             type: 'broadcast',
             event: 'commande_updated',
             payload: {
-                id: commande.id,
-                patient_id: commande.patient_id,
+                id: updated.id,
+                patient_id: updated.patient_id,
                 statut: "En cours de livraison",
-                action: "accepted"
+                action: "accepted",
+                aidant_id: req.user.userId
             }
         });
         
+        if (updated.patient?.famille_user_id) {
+            await sendPushNotification(
+                updated.patient.famille_user_id,
+                "🚚 Commande en cours",
+                `Un livreur a pris votre commande en charge.`,
+                "/#commandes"
+            );
+        }
+        
+        res.json({ status: "success", commande: updated });
+        
     } catch (err) {
+        console.error("❌ Erreur accept:", err);
         res.status(500).json({ error: err.message });
     }
 });
-
 
 /**
  * 💰 2. CONFIRMER LE PRIX & ASSIGNER (Coordinateur)
@@ -214,11 +227,35 @@ router.post("/confirm", middleware(["COORDINATEUR"]), async (req, res) => {
 /**
  * 📋 ASSIGNER UNE COMMANDE À UN AIDANT (Coordinateur)
  */
+/**
+ * 📋 ASSIGNER UNE COMMANDE À UN AIDANT (Coordinateur)
+ */
 router.post("/assign", middleware(["COORDINATEUR"]), async (req, res) => {
-    const { commandeId, aidant_id, notes } = req.body;
+    const { commande_id, aidant_id, notes } = req.body;
+    
+    console.log("🔵 Assignation commande:", { commande_id, aidant_id });
+    
+    if (!commande_id || !aidant_id) {
+        return res.status(400).json({ error: "commande_id et aidant_id requis" });
+    }
     
     try {
-        // Vérifier que l'aidant existe
+        // 1. Vérifier que la commande existe
+        const { data: commande, error: checkErr } = await supabase
+            .from("commandes_meds")
+            .select("id, statut, patient_id")
+            .eq("id", commande_id)
+            .single();
+        
+        if (checkErr || !commande) {
+            return res.status(404).json({ error: "Commande introuvable" });
+        }
+        
+        if (commande.statut !== "En attente") {
+            return res.status(400).json({ error: "Cette commande n'est plus disponible" });
+        }
+        
+        // 2. Vérifier que l'aidant existe
         const { data: aidant, error: aidantErr } = await supabase
             .from("profiles")
             .select("id, nom")
@@ -230,44 +267,63 @@ router.post("/assign", middleware(["COORDINATEUR"]), async (req, res) => {
             return res.status(400).json({ error: "Aidant invalide" });
         }
         
-        // Assigner l'aidant à la commande
-        const { data: cmd, error } = await supabase
+        // 3. Assigner l'aidant à la commande
+        const { data: updated, error: updateErr } = await supabase
             .from("commandes_meds")
             .update({
                 aidant_id: aidant_id,
-                statut: "En cours",
-                notes_coordinateur: notes || null
+                statut: "En cours de livraison",
+                notes_coordinateur: notes || null,
+                assigned_by: req.user.userId,
+                assigned_at: new Date().toISOString()
             })
-            .eq("id", commandeId)
+            .eq("id", commande_id)
             .select('*, patient:patients(nom_complet, famille_user_id)')
             .single();
 
-        if (error) throw error;
+        if (updateErr) {
+            console.error("❌ Erreur update:", updateErr);
+            throw updateErr;
+        }
 
-        // Notification à l'aidant
+        // 4. Notifications
         sendPushNotification(
             aidant_id,
             "📦 Nouvelle commande à livrer",
-            `Une commande pour ${cmd.patient.nom_complet} vous a été assignée.`,
+            `Une commande vous a été assignée.`,
             "/#commandes"
         );
 
-        // Notification à la famille
-        if (cmd.patient.famille_user_id) {
+        if (updated.patient?.famille_user_id) {
             sendPushNotification(
-                cmd.patient.famille_user_id,
-                "🚚 Commande en cours",
-                `Votre commande pour ${cmd.patient.nom_complet} a été prise en charge.`,
+                updated.patient.famille_user_id,
+                "🚚 Commande assignée",
+                `Un livreur a été assigné à votre commande.`,
                 "/#commandes"
             );
         }
 
-        res.json({ status: "success" });
+        // 5. Realtime update
+        const channel = getRealtimeChannel();
+        await channel.send({
+            type: 'broadcast',
+            event: 'commande_updated',
+            payload: {
+                id: updated.id,
+                patient_id: updated.patient_id,
+                statut: "En cours de livraison",
+                action: "assigned"
+            }
+        });
+
+        res.json({ status: "success", message: "Commande assignée à l'aidant" });
+        
     } catch (err) {
-        console.error("❌ Erreur assignation:", err.message);
+        console.error("❌ Erreur assignation:", err);
         res.status(500).json({ error: err.message });
     }
 });
+
 
 /**
  * ✅ VALIDER LA LIVRAISON (Coordinateur)
