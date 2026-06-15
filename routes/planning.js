@@ -2,7 +2,6 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
 const middleware = require("../middleware");
-const { sendPushNotification } = require("../utils");
 const { createNotification } = require("./notifications");
 
 // ============================================================
@@ -109,20 +108,24 @@ router.post("/add", middleware(["COORDINATEUR"]), async (req, res) => {
         break;
     }
 
-    // Notifications
-    sendPushNotification(aidant_id, "📋 Nouvelle assignation", messageAidant, "/#planning");
-    
-    if (createNotification) {
-      await createNotification(aidant_id, "📋 Nouvelle mission", messageAidant, "assignment", "/#planning");
-    }
+// Notifications : interne + push système
+await createNotification(
+  aidant_id,
+  "📋 Nouvelle assignation",
+  messageAidant,
+  "assignment",
+  "/#planning"
+);
 
-    if (patient.famille_user_id) {
-      sendPushNotification(patient.famille_user_id, "👨‍⚕️ Nouvel intervenant", messageFamille, "/#patients");
-      
-      if (createNotification) {
-        await createNotification(patient.famille_user_id, "👨‍⚕️ Nouvel intervenant", messageFamille, "assignment", "/#patients");
-      }
-    }
+if (patient.famille_user_id) {
+  await createNotification(
+    patient.famille_user_id,
+    "👨‍⚕️ Nouvel intervenant",
+    messageFamille,
+    "assignment",
+    "/#patients"
+  );
+}
 
     res.json({ status: "success", assignment: newAssignment });
 
@@ -189,23 +192,25 @@ router.post("/desactivate", middleware(["COORDINATEUR"]), async (req, res) => {
 
     if (error) throw error;
 
-    // Notifier l'aidant
-    sendPushNotification(
-      assignment.aidant_id,
-      "❌ Fin d'assignation",
-      `Vous n'êtes plus assigné à ${assignment.patient.nom_complet}.`,
-      "/#planning"
-    );
+  // Notifier l'aidant : interne + push système
+await createNotification(
+  assignment.aidant_id,
+  "❌ Fin d'assignation",
+  `Vous n'êtes plus assigné à ${assignment.patient.nom_complet}.`,
+  "assignment",
+  "/#planning"
+);
 
-    // Notifier la famille
-    if (assignment.patient.famille_user_id) {
-      sendPushNotification(
-        assignment.patient.famille_user_id,
-        "👨‍⚕️ Changement d'intervenant",
-        `${assignment.aidant.nom} n'est plus assigné à votre proche.`,
-        "/#patients"
-      );
-    }
+// Notifier la famille : interne + push système
+if (assignment.patient?.famille_user_id) {
+  await createNotification(
+    assignment.patient.famille_user_id,
+    "👨‍⚕️ Changement d'intervenant",
+    `${assignment.aidant?.nom || "L'aidant"} n'est plus assigné à votre proche.`,
+    "assignment",
+    "/#patients"
+  );
+}
 
     res.json({ status: "success" });
 
