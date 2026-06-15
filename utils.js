@@ -14,33 +14,48 @@ webpush.setVapidDetails(
  * 🔔 ENVOYER UNE NOTIFICATION PUSH (VIA FIREBASE UNIQUEMENT)
  */
 
-
 /**
- * 🔔 ENVOYER UNE NOTIFICATION PUSH (VIA FIREBASE ADMIN DIRECTEMENT)
+ * 🔔 ENVOYER UNE NOTIFICATION PUSH
  */
 async function sendPushNotification(userId, title, message, url = "/") {
   try {
-    // 1. Récupérer le token FCM depuis la base
+    // Récupérer le token
     const { data: profile, error } = await supabase
       .from("profiles")
       .select("push_token")
       .eq("id", userId)
       .single();
 
-    if (error || !profile?.push_token) {
+    if (error) {
+      console.log(`❌ Erreur récupération profil ${userId}:`, error.message);
+      return false;
+    }
+    
+    if (!profile?.push_token) {
       console.log(`📭 Pas de token FCM pour l'utilisateur ${userId}`);
       return false;
     }
 
     console.log(`📨 Envoi push à ${userId}`);
-    console.log(`🔑 Token: ${profile.push_token.substring(0, 30)}...`);
-
-    // 2. Utiliser firebase-admin directement
+    
+    // Utiliser firebase-admin
     const { sendPush } = require("./firebaseAdmin");
+    await sendPush(profile.push_token, title, message);
     
-    const result = await sendPush(profile.push_token, title, message);
+    // Sauvegarder la notification dans la base
+    await supabase
+      .from("notifications")
+      .insert([{
+        user_id: userId,
+        title: title,
+        message: message,
+        type: "push",
+        url: url,
+        read: false,
+        created_at: new Date()
+      }]);
     
-    console.log(`✅ Notification envoyée à ${userId}`);
+    console.log(`✅ Notification envoyée et sauvegardée pour ${userId}`);
     return true;
 
   } catch (err) {
@@ -48,8 +63,6 @@ async function sendPushNotification(userId, title, message, url = "/") {
     return false;
   }
 }
-
-
 /**
  * 📧 ENVOYER UN EMAIL VIA BREVO API
  */
