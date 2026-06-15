@@ -25,18 +25,21 @@ async function sendPush(token, title, body, url = "/") {
       return null;
     }
 
+    const finalTitle = String(title || "Santé Plus");
+    const finalBody = String(body || "Nouvelle notification");
+    const finalUrl = String(url || "/");
+
+    console.log(`📨 Envoi push à token: ${token.substring(0, 30)}...`);
+
     const message = {
       token,
 
-      notification: {
-        title: title || "Santé Plus",
-        body: body || "Nouvelle notification"
-      },
-
+      // ✅ IMPORTANT : data-only pour éviter les notifications doublées
       data: {
-        title: String(title || "Santé Plus"),
-        body: String(body || "Nouvelle notification"),
-        url: String(url || "/")
+        title: finalTitle,
+        body: finalBody,
+        url: finalUrl,
+        type: "push"
       },
 
       webpush: {
@@ -44,26 +47,29 @@ async function sendPush(token, title, body, url = "/") {
           Urgency: "high",
           TTL: "86400"
         },
-        notification: {
-          title: title || "Santé Plus",
-          body: body || "Nouvelle notification",
-          icon: "https://app.mysanteplus.com/assets/images/logo-general-icon.png",
-          badge: "https://app.mysanteplus.com/assets/images/logo-general-icon.png",
-          requireInteraction: true,
-          renotify: true,
-          tag: `sante-plus-${Date.now()}`,
-          vibrate: [200, 100, 200],
-          data: {
-            url: url || "/"
-          }
-        },
         fcmOptions: {
-          link: `https://app.mysanteplus.com${url || "/"}`
+          link: `https://app.mysanteplus.com${finalUrl.startsWith("/") ? finalUrl : "/" + finalUrl}`
+        }
+      },
+
+      android: {
+        priority: "high"
+      },
+
+      apns: {
+        headers: {
+          "apns-priority": "10"
+        },
+        payload: {
+          aps: {
+            contentAvailable: true
+          }
         }
       }
     };
 
     const response = await messaging.send(message);
+
     console.log("✅ Notification envoyée, ID:", response);
     return response;
 
@@ -74,14 +80,18 @@ async function sendPush(token, title, body, url = "/") {
       err.code === "messaging/invalid-registration-token" ||
       err.code === "messaging/registration-token-not-registered"
     ) {
-      const supabase = require("./supabaseClient");
+      try {
+        const supabase = require("./supabaseClient");
 
-      await supabase
-        .from("profiles")
-        .update({ push_token: null })
-        .eq("push_token", token);
+        await supabase
+          .from("profiles")
+          .update({ push_token: null })
+          .eq("push_token", token);
 
-      console.log("🗑️ Token invalide supprimé");
+        console.log("🗑️ Token invalide supprimé");
+      } catch (cleanErr) {
+        console.error("❌ Erreur suppression token invalide:", cleanErr.message);
+      }
     }
 
     throw err;
