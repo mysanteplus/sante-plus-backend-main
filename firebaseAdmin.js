@@ -20,7 +20,6 @@ const messaging = admin.messaging();
 
 async function sendPush(token, title, body) {
     try {
-        // Vérifier que le token est valide
         if (!token || token.length < 50) {
             console.error("❌ Token FCM invalide:", token);
             return null;
@@ -28,19 +27,19 @@ async function sendPush(token, title, body) {
         
         console.log(`📨 Envoi push à token: ${token.substring(0, 30)}...`);
         
+        // ✅ Format corrigé pour Firebase v10+
         const message = {
             token: token,
             notification: { 
                 title: title, 
-                body: body,
-                sound: "default"
+                body: body
+                // ❌ sound n'est pas supporté ici, on le met dans android/apns
             },
             android: {
                 priority: "high",
                 notification: {
                     sound: "default",
-                    channelId: "sante_plus_channel",
-                    clickAction: "FLUTTER_NOTIFICATION_CLICK"
+                    channelId: "sante_plus_channel"
                 }
             },
             apns: {
@@ -71,7 +70,6 @@ async function sendPush(token, title, body) {
     } catch (err) {
         console.error("❌ Erreur sendPush:", err.message);
         if (err.code === "messaging/invalid-registration-token") {
-            // Token invalide, on le supprime de la base
             const { supabase } = require("./supabaseClient");
             await supabase
                 .from("profiles")
