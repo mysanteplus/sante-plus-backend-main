@@ -2,7 +2,8 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
 const middleware = require("../middleware");
-const { sendPushNotification, checkActiveSubscription } = require("../utils");
+const { checkActiveSubscription } = require("../utils");
+const { createNotification } = require("./notifications");
 const multer = require("multer");
 const { getRealtimeChannel } = require("../utils");
 
@@ -160,14 +161,15 @@ router.post("/accept", middleware(["AIDANT"]), async (req, res) => {
             }
         });
         
-        if (updated.patient?.famille_user_id) {
-            await sendPushNotification(
-                updated.patient.famille_user_id,
-                "🚚 Commande en cours",
-                `Un livreur a pris votre commande en charge.`,
-                "/#commandes"
-            );
-        }
+if (updated.patient?.famille_user_id) {
+    await createNotification(
+        updated.patient.famille_user_id,
+        "🚚 Commande en cours",
+        "Un livreur a pris votre commande en charge.",
+        "commande",
+        "/#commandes"
+    );
+}
         
         res.json({ status: "success", commande: updated });
         
@@ -210,12 +212,13 @@ router.post("/confirm", middleware(["COORDINATEUR"]), async (req, res) => {
         if (error) throw error;
 
         // Notification à l'aidant
-        sendPushNotification(
-            aidant_id,
-            "📦 Nouvelle commande à livrer",
-            `Une commande pour ${cmd.patient.nom_complet} vous a été assignée.`,
-            "/#commandes"
-        );
+            await createNotification(
+                aidant_id,
+                "📦 Nouvelle commande à livrer",
+                `Une commande pour ${cmd.patient?.nom_complet || "un patient"} vous a été assignée.`,
+                "commande",
+                "/#commandes"
+            );
 
         res.json({ status: "success" });
     } catch (err) {
@@ -224,9 +227,7 @@ router.post("/confirm", middleware(["COORDINATEUR"]), async (req, res) => {
     }
 });
 
-/**
- * 📋 ASSIGNER UNE COMMANDE À UN AIDANT (Coordinateur)
- */
+
 /**
  * 📋 ASSIGNER UNE COMMANDE À UN AIDANT (Coordinateur)
  */
@@ -286,23 +287,24 @@ router.post("/assign", middleware(["COORDINATEUR"]), async (req, res) => {
             throw updateErr;
         }
 
-        // 4. Notifications
-        sendPushNotification(
-            aidant_id,
-            "📦 Nouvelle commande à livrer",
-            `Une commande vous a été assignée.`,
-            "/#commandes"
-        );
+       // 4. Notifications : interne + push système
+await createNotification(
+    aidant_id,
+    "📦 Nouvelle commande à livrer",
+    "Une commande vous a été assignée.",
+    "commande",
+    "/#commandes"
+);
 
-        if (updated.patient?.famille_user_id) {
-            sendPushNotification(
-                updated.patient.famille_user_id,
-                "🚚 Commande assignée",
-                `Un livreur a été assigné à votre commande.`,
-                "/#commandes"
-            );
-        }
-
+if (updated.patient?.famille_user_id) {
+    await createNotification(
+        updated.patient.famille_user_id,
+        "🚚 Commande assignée",
+        "Un livreur a été assigné à votre commande.",
+        "commande",
+        "/#commandes"
+    );
+}
         // 5. Realtime update
         const channel = getRealtimeChannel();
         await channel.send({
@@ -344,14 +346,15 @@ router.post("/validate", middleware(["COORDINATEUR"]), async (req, res) => {
         if (error) throw error;
         
         // Notification à la famille
-        if (commande.patient.famille_user_id) {
-            sendPushNotification(
-                commande.patient.famille_user_id,
-                "✅ Livraison validée",
-                `La livraison pour ${commande.patient.nom_complet} a été validée par la coordination.`,
-                "/#commandes"
-            );
-        }
+       if (commande.patient?.famille_user_id) {
+    await createNotification(
+        commande.patient.famille_user_id,
+        "✅ Livraison validée",
+        `La livraison pour ${commande.patient.nom_complet} a été validée par la coordination.`,
+        "commande",
+        "/#commandes"
+    );
+}
         
         res.json({ status: "success" });
     } catch (err) {
@@ -361,9 +364,7 @@ router.post("/validate", middleware(["COORDINATEUR"]), async (req, res) => {
 
 
 
-/**
- * 📦 AIDANT LIVRE LA COMMANDE (avec plusieurs photos)
- */
+
 /**
  * 📦 AIDANT LIVRE LA COMMANDE (avec plusieurs photos) - VERSION CORRIGÉE
  */
@@ -508,12 +509,13 @@ router.post("/:id/deliver", middleware(["AIDANT"]), upload.array('photos', 5), a
 
         if (!patientErr && patient && patient.famille_user_id) {
             try {
-                await sendPushNotification(
-                    patient.famille_user_id,
-                    "📦 Commande livrée",
-                    `Votre commande pour ${patient.nom_complet} a été livrée.`,
-                    "/#commandes"
-                );
+               await createNotification(
+    patient.famille_user_id,
+    "📦 Commande livrée",
+    `Votre commande pour ${patient.nom_complet} a été livrée.`,
+    "commande",
+    "/#commandes"
+);
             } catch (pushErr) {
                 console.warn("⚠️ Push notification échouée:", pushErr.message);
             }
@@ -765,12 +767,13 @@ async function autoAssignPendingCommands() {
                 })
                 .eq("id", cmd.id);
             
-            await sendPushNotification(
-                aidantId,
-                cmd.urgent ? "⚠️ Commande urgente (auto-assignée)" : "📦 Nouvelle commande (auto-assignée)",
-                `Une commande ${cmd.urgent ? "urgente " : ""}vous a été automatiquement assignée.`,
-                "/#commandes"
-            );
+await createNotification(
+    aidantId,
+    cmd.urgent ? "⚠️ Commande urgente (auto-assignée)" : "📦 Nouvelle commande (auto-assignée)",
+    `Une commande ${cmd.urgent ? "urgente " : ""}vous a été automatiquement assignée.`,
+    "commande",
+    "/#commandes"
+);
             
             console.log(`✅ Commande ${cmd.id} auto-assignée à ${aidantNom}`);
         }
