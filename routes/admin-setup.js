@@ -50,7 +50,7 @@ function getWelcomeEmail(nom, prenom, email, password, role, url) {
           
           <div class="credentials">
             <p><strong>📧 Email :</strong> ${email}</p>
-            <p><strong>🔑 Mot de passe temporaire :</strong> <code style="background:#fff; padding:4px 8px; border-radius:4px;">${password}</code></p>
+            <p><strong>🔑 Mot de passe :</strong> <code style="background:#fff; padding:4px 8px; border-radius:4px;">${password}</code></p>
             <p style="font-size:12px; margin-top:10px;">⚠️ Nous vous recommandons de changer votre mot de passe lors de votre première connexion.</p>
           </div>
           
@@ -68,7 +68,7 @@ function getWelcomeEmail(nom, prenom, email, password, role, url) {
 }
 
 // ============================================================
-// 🚀 CRÉER LE PREMIER ADMIN (sans authentification)
+// 🚀 CRÉER UN ADMINISTRATEUR (accessible sans auth pour l'installation)
 // ============================================================
 router.post("/create-first-admin", async (req, res) => {
   const { email, password, nom, prenom, telephone } = req.body;
@@ -78,17 +78,16 @@ router.post("/create-first-admin", async (req, res) => {
   }
 
   try {
-    // Vérifier si des admins existent déjà
-    const { data: existingAdmins, error: checkErr } = await supabase
+    // ✅ CRÉATION SIMPLE - PAS DE VÉRIFICATION POUR PERMETTRE PLUSIEURS ADMINS
+    // Seule vérification : email unique
+    const { data: existingUser } = await supabase
       .from("profiles")
       .select("id")
-      .eq("role", "COORDINATEUR")
-      .limit(1);
+      .eq("email", email)
+      .maybeSingle();
 
-    if (existingAdmins && existingAdmins.length > 0) {
-      return res.status(403).json({ 
-        error: "Un administrateur existe déjà. Cette page n'est accessible qu'à l'installation initiale." 
-      });
+    if (existingUser) {
+      return res.status(400).json({ error: "Un utilisateur avec cet email existe déjà" });
     }
 
     // Créer l'utilisateur dans Supabase Auth
@@ -120,11 +119,11 @@ router.post("/create-first-admin", async (req, res) => {
 
     if (profileErr) throw profileErr;
 
-    console.log(`✅ Premier administrateur créé: ${email}`);
+    console.log(`✅ Administrateur créé: ${email}`);
     
     res.json({ 
       success: true, 
-      message: "Administrateur créé avec succès. Vous pouvez maintenant vous connecter."
+      message: "Administrateur créé avec succès."
     });
 
   } catch (err) {
@@ -134,7 +133,7 @@ router.post("/create-first-admin", async (req, res) => {
 });
 
 // ============================================================
-// 🔍 VÉRIFIER SI DES ADMINS EXISTENT
+// 🔍 VÉRIFIER SI DES ADMINS EXISTENT (juste pour info)
 // ============================================================
 router.get("/has-admin", async (req, res) => {
   try {
@@ -147,6 +146,24 @@ router.get("/has-admin", async (req, res) => {
     if (error) throw error;
     
     res.json({ hasAdmin: data && data.length > 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 📋 LISTER TOUS LES ADMINISTRATEURS
+// ============================================================
+router.get("/admins", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, email, nom, prenom, telephone, created_at")
+      .eq("role", "COORDINATEUR")
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    res.json(data || []);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -189,8 +206,7 @@ router.post("/create-user", middleware(["COORDINATEUR"]), async (req, res) => {
   }
 
   try {
-    // Vérifier si l'utilisateur existe déjà
-    const { data: existing, error: checkErr } = await supabase
+    const { data: existing } = await supabase
       .from("profiles")
       .select("id")
       .eq("email", email)
@@ -200,10 +216,8 @@ router.post("/create-user", middleware(["COORDINATEUR"]), async (req, res) => {
       return res.status(400).json({ error: "Un utilisateur avec cet email existe déjà" });
     }
 
-    // Générer un mot de passe aléatoire
     const plainPassword = generateRandomPassword();
     
-    // Créer l'utilisateur dans Supabase Auth
     const { data: authUser, error: authErr } = await supabase.auth.admin.createUser({
       email: email,
       password: plainPassword,
@@ -217,7 +231,6 @@ router.post("/create-user", middleware(["COORDINATEUR"]), async (req, res) => {
 
     if (authErr) throw authErr;
 
-    // Créer le profil dans la table profiles
     const { error: profileErr } = await supabase
       .from("profiles")
       .insert({
@@ -235,7 +248,6 @@ router.post("/create-user", middleware(["COORDINATEUR"]), async (req, res) => {
 
     if (profileErr) throw profileErr;
 
-    // Envoyer l'email de bienvenue
     const frontendUrl = process.env.FRONTEND_URL;
     const emailHtml = getWelcomeEmail(nom, prenom || "", email, plainPassword, role, frontendUrl);
     
@@ -280,7 +292,6 @@ router.post("/reset-password", middleware(["COORDINATEUR"]), async (req, res) =>
 
     if (updateErr) throw updateErr;
 
-    // Récupérer l'email de l'utilisateur
     const { data: profile, error: profileErr } = await supabase
       .from("profiles")
       .select("email, nom, prenom")
@@ -307,7 +318,6 @@ router.delete("/user/:id", middleware(["COORDINATEUR"]), async (req, res) => {
   const { id } = req.params;
 
   try {
-    // Supprimer le profil
     const { error: profileErr } = await supabase
       .from("profiles")
       .delete()
@@ -315,7 +325,6 @@ router.delete("/user/:id", middleware(["COORDINATEUR"]), async (req, res) => {
 
     if (profileErr) throw profileErr;
 
-    // Supprimer l'utilisateur de l'auth
     const { error: authErr } = await supabase.auth.admin.deleteUser(id);
     if (authErr) console.warn("Erreur suppression auth (peut être ignorée):", authErr.message);
 
