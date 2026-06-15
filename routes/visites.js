@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
 const middleware = require("../middleware");
-const { sendPushNotification, checkActiveSubscription } = require("../utils");
+const { checkActiveSubscription } = require("../utils");
 const { createNotification } = require("./notifications");
 const multer = require("multer");
 const upload = multer({ storage: multer.memoryStorage() });
@@ -107,24 +107,15 @@ router.post("/start", middleware(["AIDANT"]), async (req, res) => {
             console.warn("⚠️ Erreur envoi Realtime:", realtimeErr.message);
         }
 
-        // Notifier la famille (push notification)
-        if (visite.patient && visite.patient.famille_user_id) {
-            await sendPushNotification(
+         // Notifier la famille : notification interne + push système
+        if (visite.patient?.famille_user_id) {
+            await createNotification(
                 visite.patient.famille_user_id,
                 "🔔 Début d'intervention",
-                `L'intervenant vient d'arriver au domicile de ${visite.patient.nom_complet}.`,
+                `${visite.aidant?.nom || "L'aidant"} est arrivé au domicile de ${visite.patient.nom_complet}.`,
+                "visit",
                 "/#feed"
             );
-
-            if (createNotification) {
-                await createNotification(
-                    visite.patient.famille_user_id,
-                    "🔔 Début d'intervention",
-                    `${visite.aidant?.nom || "L'aidant"} est arrivé au domicile de ${visite.patient.nom_complet}.`,
-                    "visit",
-                    "/#feed"
-                );
-            }
         }
 
         res.json({ status: "success", visite_id: visite.id });
@@ -199,23 +190,16 @@ router.post("/end", middleware(["AIDANT"]), upload.single('photo_visite'), async
         });
         console.log("📡 [REALTIME] Événement 'visite_ended' envoyé");
 
-        if (v.patient && v.patient.famille_user_id) {
-            await sendPushNotification(
-                v.patient.famille_user_id,
-                "📸 Rapport de visite disponible",
-                `L'intervention pour ${v.patient.nom_complet} est terminée.`,
-                "/#feed"
-            );
-            
-            await createNotification(
-                v.patient.famille_user_id,
-                "📸 Nouveau rapport de visite",
-                `L'intervention est terminée. Une photo est disponible.`,
-                "visit",
-                "/#feed"
-            );
-        }
-
+        if (v.patient?.famille_user_id) {
+    await createNotification(
+        v.patient.famille_user_id,
+        "📸 Rapport de visite disponible",
+        `L'intervention pour ${v.patient.nom_complet} est terminée. Une photo est disponible.`,
+        "visit",
+        "/#feed"
+    );
+}
+        
         res.json({ status: "success" });
     } catch (err) {
         console.error("❌ Erreur fin de visite:", err.message);
@@ -244,36 +228,29 @@ router.post("/validate", middleware(["COORDINATEUR"]), async (req, res) => {
             await channel.send({
                 type: 'broadcast',
                 event: 'visite_updated',
-                payload: {
-                    id: visite.id,
-                    patient_id: visite.patient_id,
-                    statut: "En cours",
-                    action: "started",
-                    patient_nom: visite.patient?.nom_complet,
-                    updated_at: new Date().toISOString()
-                }
+                    payload: {
+                        id: visite.id,
+                        patient_id: visite.patient_id,
+                        statut: statut,
+                        action: statut === "Validé" ? "validated" : "rejected",
+                        patient_nom: visite.patient?.nom_complet,
+                        updated_at: new Date().toISOString()
+                    }
             });
             console.log(`📡 [REALTIME] Événement 'visite_${statut === "Validé" ? "validated" : "rejected"}' envoyé`);
         } catch (realtimeErr) {
             console.warn("⚠️ Erreur envoi Realtime:", realtimeErr.message);
         }
 
-        if (statut === "Validé" && visite.patient.famille_user_id) {
-            await sendPushNotification(
-                visite.patient.famille_user_id,
-                "✅ Bilan validé par la coordination",
-                `Le rapport pour ${visite.patient.nom_complet} a été certifié conforme.`,
-                "/#feed"
-            );
-
-            await createNotification(
-                visite.patient.famille_user_id,
-                "✅ Visite validée",
-                `Le rapport de visite pour ${visite.patient.nom_complet} a été certifié conforme.`,
-                "visit",
-                "/#feed"
-            );
-        }
+     if (statut === "Validé" && visite.patient?.famille_user_id) {
+    await createNotification(
+        visite.patient.famille_user_id,
+        "✅ Bilan validé par la coordination",
+        `Le rapport de visite pour ${visite.patient.nom_complet} a été certifié conforme.`,
+        "visit",
+        "/#feed"
+    );
+}
 
         res.json({ status: "success" });
     } catch (err) {
@@ -396,17 +373,10 @@ router.post("/track", middleware(['AIDANT']), async (req, res) => {
                 
                 const message = `🩺 ${visite.aidant?.nom || "L'aidant"} est arrivé${distance < 20 ? ' devant le domicile' : ' dans le quartier'} de ${visite.patient.nom_complet}.`;
                 
-                await sendPushNotification(
-                    visite.patient.famille_user_id,
-                    "🚪 L'aidant arrive",
-                    message,
-                    "/#feed"
-                );
-
                 await createNotification(
                     visite.patient.famille_user_id,
                     "🚪 L'aidant arrive",
-                    `${visite.aidant?.nom || "L'aidant"} est arrivé${distance < 20 ? ' au domicile' : ' dans le quartier'} de ${visite.patient.nom_complet}.`,
+                    `${visite.aidant?.nom || "L'aidant"} est arrivé${distance < 20 ? " au domicile" : " dans le quartier"} de ${visite.patient.nom_complet}.`,
                     "visit",
                     "/#feed"
                 );
@@ -817,18 +787,13 @@ router.post("/send", middleware(), async (req, res) => {
     const { userId, title, message, type, url } = req.body;
     
     try {
-        await supabase.from("notifications").insert({
-            user_id: userId,
-            title,
-            message,
-            type: type || "visit",
-            url: url || "/",
-            read: false,
-            created_at: new Date()
-        });
-        
-        const { sendPushNotification } = require("../utils");
-        await sendPushNotification(userId, title, message, url);
+        await createNotification(
+            userId,
+            title || "Santé Plus",
+            message || "Nouvelle notification",
+            type || "visit",
+            url || "/"
+        );
         
         res.json({ status: "success" });
     } catch (err) {
