@@ -1,7 +1,6 @@
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
-const middleware = require("../middleware");
 const { sendEmailAPI } = require("../utils");
 
 // Générer un mot de passe aléatoire sécurisé
@@ -15,7 +14,7 @@ function generateRandomPassword(length = 10) {
 }
 
 // Template d'email de bienvenue
-function getWelcomeEmail(nom, prenom, email, password, role, url) {
+function getWelcomeEmail(email, password, nom, prenom, role) {
   const roleName = {
     'COORDINATEUR': 'Administrateur',
     'AIDANT': 'Aidant',
@@ -54,7 +53,7 @@ function getWelcomeEmail(nom, prenom, email, password, role, url) {
             <p style="font-size:12px; margin-top:10px;">⚠️ Nous vous recommandons de changer votre mot de passe lors de votre première connexion.</p>
           </div>
           
-          <a href="${url}" class="btn">🔗 Accéder à mon espace</a>
+          <a href="${process.env.FRONTEND_URL}" class="btn">🔗 Accéder à mon espace</a>
           
           <p style="margin-top: 20px;">Cordialement,<br><strong>L'équipe Santé Plus</strong></p>
         </div>
@@ -66,67 +65,6 @@ function getWelcomeEmail(nom, prenom, email, password, role, url) {
     </html>
   `;
 }
-
-// ============================================================
-// 🚀 CRÉER UN ADMINISTRATEUR
-// ============================================================
-router.post("/create-first-admin", async (req, res) => {
-  const { email, password, nom, prenom, telephone } = req.body;
-
-  if (!email || !password || !nom) {
-    return res.status(400).json({ error: "Email, nom et mot de passe requis" });
-  }
-
-  try {
-    const { data: existingUser } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("email", email)
-      .maybeSingle();
-
-    if (existingUser) {
-      return res.status(400).json({ error: "Un utilisateur avec cet email existe déjà" });
-    }
-
-    const { data: authUser, error: authErr } = await supabase.auth.admin.createUser({
-      email: email,
-      password: password,
-      email_confirm: true,
-      user_metadata: {
-        nom: nom,
-        prenom: prenom || "",
-        role: "COORDINATEUR"
-      }
-    });
-
-    if (authErr) throw authErr;
-
-    const { error: profileErr } = await supabase
-      .from("profiles")
-      .insert({
-        id: authUser.user.id,
-        email: email,
-        nom: nom,
-        prenom: prenom || null,
-        telephone: telephone || null,
-        role: "COORDINATEUR",
-        statut_validation: "ACTIF"
-      });
-
-    if (profileErr) throw profileErr;
-
-    console.log(`✅ Administrateur créé: ${email}`);
-    
-    res.json({ 
-      success: true, 
-      message: "Administrateur créé avec succès."
-    });
-
-  } catch (err) {
-    console.error("❌ Erreur création admin:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // ============================================================
 // 🔍 VÉRIFIER SI DES ADMINS EXISTENT
@@ -142,6 +80,7 @@ router.get("/has-admin", async (req, res) => {
     if (error) throw error;
     res.json({ hasAdmin: data && data.length > 0 });
   } catch (err) {
+    console.error("❌ Erreur has-admin:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -160,6 +99,7 @@ router.get("/admins", async (req, res) => {
     if (error) throw error;
     res.json(data || []);
   } catch (err) {
+    console.error("❌ Erreur liste admins:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -167,7 +107,7 @@ router.get("/admins", async (req, res) => {
 // ============================================================
 // 👁️ VOIR DÉTAILS D'UN ADMIN
 // ============================================================
-router.get("/admin/:id", middleware(["COORDINATEUR"]), async (req, res) => {
+router.get("/admin/:id", async (req, res) => {
   const { id } = req.params;
   
   try {
@@ -187,7 +127,7 @@ router.get("/admin/:id", middleware(["COORDINATEUR"]), async (req, res) => {
 // ============================================================
 // ✏️ MODIFIER UN ADMINISTRATEUR
 // ============================================================
-router.put("/admin/:id", middleware(["COORDINATEUR"]), async (req, res) => {
+router.put("/admin/:id", async (req, res) => {
   const { id } = req.params;
   const { nom, prenom, telephone, email } = req.body;
   
@@ -211,9 +151,9 @@ router.put("/admin/:id", middleware(["COORDINATEUR"]), async (req, res) => {
 });
 
 // ============================================================
-// 🔒 DÉSACTIVER/ACTIVER UN ADMINISTRATEUR
+// 🔒 ACTIVER/DÉSACTIVER UN ADMINISTRATEUR
 // ============================================================
-router.patch("/admin/:id/toggle-status", middleware(["COORDINATEUR"]), async (req, res) => {
+router.patch("/admin/:id/toggle-status", async (req, res) => {
   const { id } = req.params;
   const { statut_validation } = req.body;
   
@@ -236,7 +176,7 @@ router.patch("/admin/:id/toggle-status", middleware(["COORDINATEUR"]), async (re
 // ============================================================
 // 🔄 RÉINITIALISER LE MOT DE PASSE
 // ============================================================
-router.post("/admin/:id/reset-password", middleware(["COORDINATEUR"]), async (req, res) => {
+router.post("/admin/:id/reset-password", async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -255,8 +195,7 @@ router.post("/admin/:id/reset-password", middleware(["COORDINATEUR"]), async (re
       .single();
 
     if (!profileErr && profile) {
-      const frontendUrl = process.env.FRONTEND_URL;
-      const emailHtml = getWelcomeEmail(profile.nom, profile.prenom || "", profile.email, newPassword, "reset", frontendUrl);
+      const emailHtml = getWelcomeEmail(profile.email, newPassword, profile.nom, profile.prenom || "", "reset");
       await sendEmailAPI(profile.email, "Réinitialisation de votre mot de passe", emailHtml);
     }
 
@@ -270,7 +209,7 @@ router.post("/admin/:id/reset-password", middleware(["COORDINATEUR"]), async (re
 // ============================================================
 // 🗑️ SUPPRIMER UN ADMINISTRATEUR
 // ============================================================
-router.delete("/admin/:id", middleware(["COORDINATEUR"]), async (req, res) => {
+router.delete("/admin/:id", async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -287,6 +226,79 @@ router.delete("/admin/:id", middleware(["COORDINATEUR"]), async (req, res) => {
     res.json({ success: true, message: "Administrateur supprimé avec succès" });
 
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 🚀 CRÉER UN ADMINISTRATEUR (SANS AUTH)
+// ============================================================
+router.post("/create-first-admin", async (req, res) => {
+  const { email, password, nom, prenom, telephone } = req.body;
+
+  if (!email || !password || !nom) {
+    return res.status(400).json({ error: "Email, nom et mot de passe requis" });
+  }
+
+  try {
+    // Vérifier si l'email existe déjà
+    const { data: existingUser } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("email", email)
+      .maybeSingle();
+
+    if (existingUser) {
+      return res.status(400).json({ error: "Un utilisateur avec cet email existe déjà" });
+    }
+
+    // Créer l'utilisateur dans Supabase Auth
+    const { data: authUser, error: authErr } = await supabase.auth.admin.createUser({
+      email: email,
+      password: password,
+      email_confirm: true,
+      user_metadata: {
+        nom: nom,
+        prenom: prenom || "",
+        role: "COORDINATEUR"
+      }
+    });
+
+    if (authErr) throw authErr;
+
+    // Créer le profil
+    const { error: profileErr } = await supabase
+      .from("profiles")
+      .insert({
+        id: authUser.user.id,
+        email: email,
+        nom: nom,
+        prenom: prenom || null,
+        telephone: telephone || null,
+        role: "COORDINATEUR",
+        statut_validation: "ACTIF"
+      });
+
+    if (profileErr) throw profileErr;
+
+    // Envoyer l'email de bienvenue
+    try {
+      const emailHtml = getWelcomeEmail(email, password, nom, prenom || "", "COORDINATEUR");
+      await sendEmailAPI(email, "Bienvenue sur Santé Plus Services", emailHtml);
+      console.log(`📧 Email envoyé à ${email}`);
+    } catch (emailErr) {
+      console.error("❌ Erreur envoi email:", emailErr.message);
+    }
+
+    console.log(`✅ Administrateur créé: ${email}`);
+    
+    res.json({ 
+      success: true, 
+      message: "Administrateur créé avec succès. Un email a été envoyé."
+    });
+
+  } catch (err) {
+    console.error("❌ Erreur création admin:", err);
     res.status(500).json({ error: err.message });
   }
 });
