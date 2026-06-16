@@ -49,10 +49,17 @@ router.get(
 
         if (error) throw error;
 
-        // Vérifier les droits d'accès
+
+        const canAccessPatient = await hasAccessToPatient(data.patient_id, currentUserId, currentRole);
+
+        if (!canAccessPatient) {
+          return res.status(403).json({ error: "Accès non autorisé à ce dossier patient" });
+        }
+        
         if (!hasAccessToMessage(data, currentUserId, currentRole)) {
           return res.status(403).json({ error: "Accès non autorisé à ce message" });
         }
+        
 
         // Formatage du message unique avec sender_id
         return res.json([{
@@ -80,6 +87,12 @@ router.get(
       if (!patient_id) {
         return res.status(400).json({ error: "ID du patient manquant" });
       }
+
+      const canAccessPatient = await hasAccessToPatient(patient_id, currentUserId, currentRole);
+
+        if (!canAccessPatient) {
+          return res.status(403).json({ error: "Accès non autorisé à ce dossier patient" });
+        }
 
       const { data, error } = await supabase
         .from("messages")
@@ -131,6 +144,41 @@ router.get(
     }
   }
 );
+
+
+
+async function hasAccessToPatient(patientId, userId, role) {
+  if (!patientId || !userId || !role) return false;
+
+  if (role === "COORDINATEUR") {
+    return true;
+  }
+
+  if (role === "FAMILLE") {
+    const { data: patient, error } = await supabase
+      .from("patients")
+      .select("id")
+      .eq("id", patientId)
+      .eq("famille_user_id", userId)
+      .maybeSingle();
+
+    return !error && !!patient;
+  }
+
+  if (role === "AIDANT") {
+    const { data: planning, error } = await supabase
+      .from("planning")
+      .select("id")
+      .eq("patient_id", patientId)
+      .eq("aidant_id", userId)
+      .eq("est_actif", true)
+      .maybeSingle();
+
+    return !error && !!planning;
+  }
+
+  return false;
+}
 
 // ============================================================
 // FONCTION DE VÉRIFICATION D'ACCÈS
@@ -216,20 +264,64 @@ async function notifyMessageRecipients({
 // ============================================================
 router.post(
   "/react",
-  middleware(["FAMILLE", "COORDINATEUR"]),
+  middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]),
   async (req, res) => {
     const { message_id, reaction_type } = req.body;
 
+    if (!message_id) {
+      return res.status(400).json({ error: "message_id requis" });
+    }
+
+    if (!reaction_type) {
+      return res.status(400).json({ error: "reaction_type requis" });
+    }
+
+    const currentUserId = req.user.userId;
+    const currentRole = req.user.role;
+
     try {
+      // 1. Récupérer le message complet pour connaître son patient_id, sender_id, visibility
       const { data: msg, error: fetchErr } = await supabase
         .from("messages")
-        .select("reactions")
+        .select("id, patient_id, sender_id, visibility, reactions")
         .eq("id", message_id)
-        .single();
+        .maybeSingle();
 
       if (fetchErr) throw fetchErr;
 
-      let reactions = msg.reactions || {};
+      if (!msg) {
+        return res.status(404).json({ error: "Message introuvable" });
+      }
+
+      // 2. Vérifier que l'utilisateur a accès au dossier patient
+      const canAccessPatient = await hasAccessToPatient(
+        msg.patient_id,
+        currentUserId,
+        currentRole
+      );
+
+      if (!canAccessPatient) {
+        return res.status(403).json({
+          error: "Accès non autorisé à ce dossier patient"
+        });
+      }
+
+      // 3. Vérifier que l'utilisateur a le droit de voir ce message selon visibility
+      const canAccessMessage = hasAccessToMessage(
+        msg,
+        currentUserId,
+        currentRole
+      );
+
+      if (!canAccessMessage) {
+        return res.status(403).json({
+          error: "Accès non autorisé à ce message"
+        });
+      }
+
+      // 4. Ajouter la réaction
+      const reactions = msg.reactions || {};
+
       reactions[reaction_type] = (reactions[reaction_type] || 0) + 1;
 
       const { error: updateErr } = await supabase
@@ -239,11 +331,16 @@ router.post(
 
       if (updateErr) throw updateErr;
 
-      res.json({ status: "success", reactions });
+      res.json({
+        status: "success",
+        reactions
+      });
+
     } catch (err) {
+      console.error("❌ Erreur /messages/react:", err.message);
       res.status(500).json({ error: err.message });
     }
-  },
+  }
 );
 
 // ============================================================
@@ -475,6 +572,12 @@ router.post('/mark-read', middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), asy
         }
 
         const userId = req.user.userId;
+
+      const canAccessPatient = await hasAccessToPatient(patient_id, userId, req.user.role);
+
+        if (!canAccessPatient) {
+          return res.status(403).json({ error: "Accès non autorisé à ce dossier patient" });
+        }
 
         if (!userId) {
             return res.status(401).json({ error: "Utilisateur non identifié" });
