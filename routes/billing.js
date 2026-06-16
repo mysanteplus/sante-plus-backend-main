@@ -226,6 +226,26 @@ router.get("/", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
 
 router.post("/pay", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
     const { abonnement_id, montant, transaction_id, mode_paiement } = req.body;
+
+    if (req.user.role === "FAMILLE") {
+    const { data: abonnement, error: aboCheckErr } = await supabase
+        .from("abonnements")
+        .select(`
+            id,
+            patient:patient_id (
+                id,
+                famille_user_id
+            )
+        `)
+        .eq("id", abonnement_id)
+        .maybeSingle();
+
+    if (aboCheckErr) throw aboCheckErr;
+
+    if (!abonnement || abonnement.patient?.famille_user_id !== req.user.userId) {
+        return res.status(403).json({ error: "Paiement non autorisé pour cette facture" });
+    }
+}
     
     try {
         const paymentDate = new Date();
@@ -394,27 +414,59 @@ router.post("/initiate-payment", middleware(["FAMILLE"]), async (req, res) => {
 // 📝 4. GÉNÉRER UNE FACTURE
 // ============================================================
 
+// ============================================================
+// 📝 4. GÉNÉRER UNE FACTURE
+// ============================================================
 router.post("/generate", middleware(["FAMILLE"]), async (req, res) => {
     const { patient_id, montant, pack } = req.body;
-    const monthYear = new Date().toLocaleDateString("fr-FR", {
-        month: "2-digit",
-        year: "numeric",
-    });
-    
-    const { data, error } = await supabase
-        .from("abonnements")
-        .insert([{
-            patient_id: patient_id,
-            mois_annee: monthYear,
-            montant_du: montant,
-            statut: "En attente",
-            type_pack: pack
-        }])
-        .select()
-        .single();
-    
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+
+    if (!patient_id) {
+        return res.status(400).json({ error: "patient_id requis" });
+    }
+
+    if (!montant || !pack) {
+        return res.status(400).json({ error: "Montant ou pack manquant" });
+    }
+
+    try {
+        const { data: patient, error: patientErr } = await supabase
+            .from("patients")
+            .select("id, famille_user_id")
+            .eq("id", patient_id)
+            .eq("famille_user_id", req.user.userId)
+            .maybeSingle();
+
+        if (patientErr) throw patientErr;
+
+        if (!patient) {
+            return res.status(403).json({ error: "Accès non autorisé à ce patient" });
+        }
+
+        const monthYear = new Date().toLocaleDateString("fr-FR", {
+            month: "2-digit",
+            year: "numeric",
+        });
+
+        const { data, error } = await supabase
+            .from("abonnements")
+            .insert([{
+                patient_id,
+                mois_annee: monthYear,
+                montant_du: montant,
+                statut: "En attente",
+                type_pack: pack
+            }])
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        res.json(data);
+
+    } catch (err) {
+        console.error("❌ Erreur génération facture:", err.message);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // ============================================================
@@ -685,61 +737,74 @@ router.get("/confort-status", middleware(["FAMILLE"]), async (req, res) => {
 });
 
 // ============================================================
-// 🔍 9. VÉRIFIER LE STATUT D'ABONNEMENT (pour frontend)
+// 🔍 9. VÉRIFIER LE STATUT D'ABONNEMENT
 // ============================================================
-
 router.get("/subscription-status", middleware(["FAMILLE"]), async (req, res) => {
     try {
-        const hasSubscription = await checkActiveSubscription(req.user.userId, req.user.role);
-        
+        const userId = req.user.userId;
+
+        const hasSubscription = await checkActiveSubscription(userId, req.user.role);
+
+        const { data: profile, error: profileErr } = await supabase
+            .from("profiles")
+            .select("type_compte, date_fin_pack_confort")
+            .eq("id", userId)
+            .single();
+
+        if (profileErr) throw profileErr;
+
+        const isSansPatient = profile?.type_compte === "SANS_PATIENT";
+
         let subscriptionInfo = {
             active: hasSubscription,
+            type_compte: profile?.type_compte || "AVEC_PATIENT",
             type: null,
             endDate: null,
             daysRemaining: 0
         };
-        
-        if (hasSubscription) {
-            const { data: profile } = await supabase
-                .from("profiles")
-                .select("type_compte, date_fin_pack_confort")
-                .eq("id", req.user.userId)
-                .single();
-            
-            if (profile?.type_compte === 'SANS_PATIENT') {
-                subscriptionInfo.type = 'CONFORT_247';
-                subscriptionInfo.endDate = profile.date_fin_pack_confort;
-                if (profile.date_fin_pack_confort) {
-                    const daysRemaining = Math.ceil((new Date(profile.date_fin_pack_confort) - new Date()) / (1000 * 60 * 60 * 24));
-                    subscriptionInfo.daysRemaining = daysRemaining > 0 ? daysRemaining : 0;
-                }
-            } else {
-                const { data: patient } = await supabase
-                    .from("patients")
-                    .select("type_pack, date_fin_abonnement")
-                    .eq("famille_user_id", req.user.userId)
-                    .single();
-                
-                if (patient) {
-                    subscriptionInfo.type = patient.type_pack;
-                    subscriptionInfo.endDate = patient.date_fin_abonnement;
-                    if (patient.date_fin_abonnement) {
-                        const daysRemaining = Math.ceil((new Date(patient.date_fin_abonnement) - new Date()) / (1000 * 60 * 60 * 24));
-                        subscriptionInfo.daysRemaining = daysRemaining > 0 ? daysRemaining : 0;
-                    }
-                }
+
+        if (isSansPatient) {
+            subscriptionInfo.type = "CONFORT_247";
+            subscriptionInfo.endDate = profile.date_fin_pack_confort || null;
+
+            if (profile.date_fin_pack_confort) {
+                const daysRemaining = Math.ceil(
+                    (new Date(profile.date_fin_pack_confort) - new Date()) / (1000 * 60 * 60 * 24)
+                );
+
+                subscriptionInfo.daysRemaining = daysRemaining > 0 ? daysRemaining : 0;
+            }
+
+            return res.json(subscriptionInfo);
+        }
+
+        const { data: patient } = await supabase
+            .from("patients")
+            .select("id, type_pack, formule, date_fin_abonnement")
+            .eq("famille_user_id", userId)
+            .maybeSingle();
+
+        if (patient) {
+            subscriptionInfo.patient_id = patient.id;
+            subscriptionInfo.type = patient.type_pack || patient.formule || null;
+            subscriptionInfo.endDate = patient.date_fin_abonnement || null;
+
+            if (patient.date_fin_abonnement) {
+                const daysRemaining = Math.ceil(
+                    (new Date(patient.date_fin_abonnement) - new Date()) / (1000 * 60 * 60 * 24)
+                );
+
+                subscriptionInfo.daysRemaining = daysRemaining > 0 ? daysRemaining : 0;
             }
         }
-        
+
         res.json(subscriptionInfo);
-        
+
     } catch (err) {
         console.error("❌ Erreur subscription-status:", err);
         res.status(500).json({ error: err.message });
     }
 });
-
-
 // ============================================================
 // 📄 GÉNÉRER UNE FACTURE (détails)
 // ============================================================
