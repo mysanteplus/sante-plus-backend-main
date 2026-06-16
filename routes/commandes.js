@@ -66,6 +66,23 @@ router.post("/add", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) =>
         // Un compte sans patient ne peut pas commander pour un patient
         return res.status(400).json({ error: "Vous ne pouvez pas commander pour un patient" });
     }
+
+    if (!isSansPatient && req.user.role === "FAMILLE") {
+    const { data: patient, error: patientCheckErr } = await supabase
+        .from("patients")
+        .select("id, famille_user_id")
+        .eq("id", patient_id)
+        .eq("famille_user_id", req.user.userId)
+        .maybeSingle();
+
+    if (patientCheckErr) throw patientCheckErr;
+
+    if (!patient) {
+        return res.status(403).json({
+            error: "Accès non autorisé à ce dossier patient"
+        });
+    }
+}
     
     try {
         let commandeData = {
@@ -124,7 +141,7 @@ router.post("/accept", middleware(["AIDANT"]), async (req, res) => {
     try {
         const { data: commande, error: checkErr } = await supabase
             .from("commandes_meds")
-            .select("id, statut, patient_id")
+            .select("id, statut, patient_id, user_id")
             .eq("id", commandeId)
             .single();
         
@@ -143,33 +160,41 @@ router.post("/accept", middleware(["AIDANT"]), async (req, res) => {
                 statut: "En cours de livraison"
             })
             .eq("id", commandeId)
-            .select('*, patient:patients(nom_complet, famille_user_id)')
+            .select(`
+                *,
+                patient:patients(nom_complet, famille_user_id),
+                demandeur:profiles!commandes_meds_user_id_fkey(id, nom)
+            `)
             .single();
         
         if (error) throw error;
         
         const channel = getRealtimeChannel();
+
         await channel.send({
-            type: 'broadcast',
-            event: 'commande_updated',
+            type: "broadcast",
+            event: "commande_updated",
             payload: {
                 id: updated.id,
                 patient_id: updated.patient_id,
+                user_id: updated.user_id,
                 statut: "En cours de livraison",
                 action: "accepted",
                 aidant_id: req.user.userId
             }
         });
-        
-if (updated.patient?.famille_user_id) {
-    await createNotification(
-        updated.patient.famille_user_id,
-        "🚚 Commande en cours",
-        "Un livreur a pris votre commande en charge.",
-        "commande",
-        "/#commandes"
-    );
-}
+
+        const familleId = updated.patient?.famille_user_id || updated.user_id;
+
+        if (familleId) {
+            await createNotification(
+                familleId,
+                "🚚 Commande en cours",
+                "Un livreur a pris votre commande en charge.",
+                "commande",
+                "/#commandes"
+            );
+        }
         
         res.json({ status: "success", commande: updated });
         
@@ -178,6 +203,8 @@ if (updated.patient?.famille_user_id) {
         res.status(500).json({ error: err.message });
     }
 });
+
+
 
 /**
  * 💰 2. CONFIRMER LE PRIX & ASSIGNER (Coordinateur)
@@ -279,7 +306,11 @@ router.post("/assign", middleware(["COORDINATEUR"]), async (req, res) => {
                 assigned_at: new Date().toISOString()
             })
             .eq("id", commande_id)
-            .select('*, patient:patients(nom_complet, famille_user_id)')
+            .select(`
+                *,
+                patient:patients(nom_complet, famille_user_id),
+                demandeur:profiles!commandes_meds_user_id_fkey(id, nom)
+            `)
             .single();
 
         if (updateErr) {
@@ -288,23 +319,26 @@ router.post("/assign", middleware(["COORDINATEUR"]), async (req, res) => {
         }
 
        // 4. Notifications : interne + push système
-await createNotification(
-    aidant_id,
-    "📦 Nouvelle commande à livrer",
-    "Une commande vous a été assignée.",
-    "commande",
-    "/#commandes"
-);
-
-if (updated.patient?.famille_user_id) {
-    await createNotification(
-        updated.patient.famille_user_id,
-        "🚚 Commande assignée",
-        "Un livreur a été assigné à votre commande.",
-        "commande",
-        "/#commandes"
-    );
-}
+        await createNotification(
+            aidant_id,
+            "📦 Nouvelle commande à livrer",
+            "Une commande vous a été assignée.",
+            "commande",
+            "/#commandes"
+        );
+        
+        const familleId = updated.patient?.famille_user_id || updated.user_id;
+        
+        if (familleId) {
+            await createNotification(
+                familleId,
+                "🚚 Commande assignée",
+                "Un livreur a été assigné à votre commande.",
+                "commande",
+                "/#commandes"
+            );
+        }
+        
         // 5. Realtime update
         const channel = getRealtimeChannel();
         await channel.send({
@@ -330,6 +364,7 @@ if (updated.patient?.famille_user_id) {
 /**
  * ✅ VALIDER LA LIVRAISON (Coordinateur)
  */
+
 router.post("/validate", middleware(["COORDINATEUR"]), async (req, res) => {
     const { commandeId } = req.body;
     
@@ -340,28 +375,37 @@ router.post("/validate", middleware(["COORDINATEUR"]), async (req, res) => {
                 statut: "Validée"
             })
             .eq("id", commandeId)
-            .select('*, patient:patients(nom_complet, famille_user_id)')
+            .select(`
+                *,
+                patient:patients(nom_complet, famille_user_id),
+                demandeur:profiles!commandes_meds_user_id_fkey(id, nom)
+            `)
             .single();
         
         if (error) throw error;
         
-        // Notification à la famille
-       if (commande.patient?.famille_user_id) {
-    await createNotification(
-        commande.patient.famille_user_id,
-        "✅ Livraison validée",
-        `La livraison pour ${commande.patient.nom_complet} a été validée par la coordination.`,
-        "commande",
-        "/#commandes"
-    );
-}
+        const familleId = commande.patient?.famille_user_id || commande.user_id;
+
+        const nomCommande = commande.patient?.nom_complet
+            ? commande.patient.nom_complet
+            : "votre commande personnelle";
+
+        if (familleId) {
+            await createNotification(
+                familleId,
+                "✅ Livraison validée",
+                `La livraison pour ${nomCommande} a été validée par la coordination.`,
+                "commande",
+                "/#commandes"
+            );
+        }
         
         res.json({ status: "success" });
     } catch (err) {
+        console.error("❌ Erreur validate:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
-
 
 
 
@@ -411,7 +455,7 @@ router.post("/:id/deliver", middleware(["AIDANT"]), upload.array('photos', 5), a
         console.log("🔍 Vérification commande:", commandeId);
         const { data: commande, error: checkErr } = await supabase
             .from("commandes_meds")
-            .select("id, aidant_id, patient_id, statut")
+            .select("id, aidant_id, patient_id, user_id, statut")
             .eq("id", commandeId)
             .single();
         
@@ -501,23 +545,33 @@ router.post("/:id/deliver", middleware(["AIDANT"]), upload.array('photos', 5), a
         }
 
         // 5. Notifications (optionnel)
-        const { data: patient, error: patientErr } = await supabase
-            .from("patients")
-            .select("nom_complet, famille_user_id")
-            .eq("id", commande.patient_id)
-            .single();
-
-        if (!patientErr && patient && patient.famille_user_id) {
+        let familleId = commande.user_id;
+        let nomCommande = "votre commande personnelle";
+        
+        if (commande.patient_id) {
+            const { data: patient, error: patientErr } = await supabase
+                .from("patients")
+                .select("nom_complet, famille_user_id")
+                .eq("id", commande.patient_id)
+                .maybeSingle();
+        
+            if (!patientErr && patient) {
+                familleId = patient.famille_user_id;
+                nomCommande = patient.nom_complet;
+            }
+        }
+        
+        if (familleId) {
             try {
-               await createNotification(
-    patient.famille_user_id,
-    "📦 Commande livrée",
-    `Votre commande pour ${patient.nom_complet} a été livrée.`,
-    "commande",
-    "/#commandes"
-);
+                await createNotification(
+                    familleId,
+                    "📦 Commande livrée",
+                    `Votre commande pour ${nomCommande} a été livrée.`,
+                    "commande",
+                    "/#commandes"
+                );
             } catch (pushErr) {
-                console.warn("⚠️ Push notification échouée:", pushErr.message);
+                console.warn("⚠️ Notification livraison échouée:", pushErr.message);
             }
         }
 
