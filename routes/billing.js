@@ -227,25 +227,29 @@ router.get("/", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
 router.post("/pay", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
     const { abonnement_id, montant, transaction_id, mode_paiement } = req.body;
 
-    if (req.user.role === "FAMILLE") {
-    const { data: abonnement, error: aboCheckErr } = await supabase
-        .from("abonnements")
-        .select(`
-            id,
-            patient:patient_id (
+       if (req.user.role === "FAMILLE") {
+        const { data: abonnement, error: aboCheckErr } = await supabase
+            .from("abonnements")
+            .select(`
                 id,
-                famille_user_id
-            )
-        `)
-        .eq("id", abonnement_id)
-        .maybeSingle();
-
-    if (aboCheckErr) throw aboCheckErr;
-
-    if (!abonnement || abonnement.patient?.famille_user_id !== req.user.userId) {
-        return res.status(403).json({ error: "Paiement non autorisé pour cette facture" });
+                user_id,
+                patient:patient_id (
+                    id,
+                    famille_user_id
+                )
+            `)
+            .eq("id", abonnement_id)
+            .maybeSingle();
+    
+        if (aboCheckErr) throw aboCheckErr;
+    
+        const ownsSansPatientInvoice = abonnement?.user_id === req.user.userId;
+        const ownsPatientInvoice = abonnement?.patient?.famille_user_id === req.user.userId;
+    
+        if (!abonnement || (!ownsSansPatientInvoice && !ownsPatientInvoice)) {
+            return res.status(403).json({ error: "Paiement non autorisé pour cette facture" });
+        }
     }
-}
     
     try {
         const paymentDate = new Date();
@@ -805,12 +809,50 @@ router.get("/subscription-status", middleware(["FAMILLE"]), async (req, res) => 
         res.status(500).json({ error: err.message });
     }
 });
+
+
+async function assertCanAccessAbonnement(req, abonnementId) {
+    if (req.user.role === "COORDINATEUR") {
+        return true;
+    }
+
+    const { data: abonnement, error } = await supabase
+        .from("abonnements")
+        .select(`
+            id,
+            user_id,
+            patient:patient_id (
+                id,
+                famille_user_id
+            )
+        `)
+        .eq("id", abonnementId)
+        .maybeSingle();
+
+    if (error) throw error;
+
+    if (!abonnement) {
+        return false;
+    }
+
+    const ownsSansPatientInvoice = abonnement.user_id === req.user.userId;
+    const ownsPatientInvoice = abonnement.patient?.famille_user_id === req.user.userId;
+
+    return ownsSansPatientInvoice || ownsPatientInvoice;
+}
+
 // ============================================================
 // 📄 GÉNÉRER UNE FACTURE (détails)
 // ============================================================
 
 router.get("/invoice/:id", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
     const { id } = req.params;
+
+    const canAccess = await assertCanAccessAbonnement(req, id);
+
+    if (!canAccess) {
+        return res.status(403).json({ error: "Accès non autorisé à cette facture" });
+    }
     
     try {
         const { data: abonnement, error } = await supabase
@@ -849,6 +891,12 @@ router.get("/invoice/:id", middleware(["COORDINATEUR", "FAMILLE"]), async (req, 
 
 router.get("/invoice-data/:id", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
     const { id } = req.params;
+
+    const canAccess = await assertCanAccessAbonnement(req, id);
+
+    if (!canAccess) {
+        return res.status(403).json({ error: "Accès non autorisé à cette facture" });
+    }
     
     try {
         const { data: abonnement, error } = await supabase
