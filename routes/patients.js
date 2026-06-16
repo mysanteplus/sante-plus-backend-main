@@ -10,6 +10,40 @@ const middleware = require("../middleware");
 // ============================================================
 // backend/routes/patients.js
 
+
+async function hasAccessToPatient(patientId, userId, role) {
+  if (!patientId || !userId || !role) return false;
+
+  if (role === "COORDINATEUR") {
+    return true;
+  }
+
+  if (role === "FAMILLE") {
+    const { data: patient, error } = await supabase
+      .from("patients")
+      .select("id")
+      .eq("id", patientId)
+      .eq("famille_user_id", userId)
+      .maybeSingle();
+
+    return !error && !!patient;
+  }
+
+  if (role === "AIDANT") {
+    const { data: planning, error } = await supabase
+      .from("planning")
+      .select("id")
+      .eq("patient_id", patientId)
+      .eq("aidant_id", userId)
+      .eq("est_actif", true)
+      .maybeSingle();
+
+    return !error && !!planning;
+  }
+
+  return false;
+}
+
 // 📋 1. LISTER LES PATIENTS (CORRIGÉ)
 router.get("/", middleware(["COORDINATEUR", "FAMILLE", "AIDANT"]), async (req, res) => {
   try {
@@ -94,18 +128,30 @@ router.post("/link-family", middleware(["COORDINATEUR"]), async (req, res) => {
 // ============================================================
 router.get("/:id", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, res) => {
   try {
+    const patientId = req.params.id;
+    const userId = req.user.userId;
+    const role = req.user.role;
+
+    const canAccess = await hasAccessToPatient(patientId, userId, role);
+
+    if (!canAccess) {
+      return res.status(403).json({ error: "Accès non autorisé à ce dossier patient" });
+    }
+
     const { data, error } = await supabase
       .from("patients")
       .select(`
         *,
         famille:famille_user_id (nom, email, telephone)
       `)
-      .eq("id", req.params.id)
+      .eq("id", patientId)
       .single();
 
     if (error) throw error;
+
     res.json(data);
   } catch (err) {
+    console.error("❌ Erreur récupération patient:", err.message);
     res.status(404).json({ error: "Dossier introuvable" });
   }
 });
@@ -113,27 +159,44 @@ router.get("/:id", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req
 // ============================================================
 // 📍 5. FIXER LES COORDONNÉES GPS
 // ============================================================
-router.post("/update-gps", middleware(['COORDINATEUR', 'AIDANT']), async (req, res) => {
+router.post("/update-gps", middleware(["COORDINATEUR", "AIDANT"]), async (req, res) => {
   const { patient_id, lat, lng } = req.body;
 
+  if (!patient_id) {
+    return res.status(400).json({ error: "patient_id requis" });
+  }
+
   try {
+    const canAccess = await hasAccessToPatient(
+      patient_id,
+      req.user.userId,
+      req.user.role
+    );
+
+    if (!canAccess) {
+      return res.status(403).json({ error: "Accès non autorisé à ce dossier patient" });
+    }
+
     const { error } = await supabase
       .from("patients")
-      .update({ 
-        lat: lat, 
-        lng: lng,
+      .update({
+        lat,
+        lng,
         rayon_geofence: 100
       })
       .eq("id", patient_id);
 
     if (error) throw error;
-    res.json({ status: "success", message: "Coordonnées du domicile enregistrées." });
+
+    res.json({
+      status: "success",
+      message: "Coordonnées du domicile enregistrées."
+    });
   } catch (err) {
     console.error("❌ Erreur Update GPS:", err.message);
     res.status(500).json({ error: "Impossible d'enregistrer la position." });
   }
 });
-
 // ============================================================
 // 💳 6. METTRE À JOUR LE PACK D'UN PATIENT
 // ============================================================
@@ -175,61 +238,109 @@ router.put("/:id/update-pack", middleware(["FAMILLE", "COORDINATEUR"]), async (r
 // ============================================================
 router.put("/update-info", middleware(["FAMILLE", "COORDINATEUR"]), async (req, res) => {
   const { adresse, notes_medicales } = req.body;
-  
   let patientId = req.body.patient_id;
-  
-  if (req.user.role === "FAMILLE" && !patientId) {
-    const { data: patient } = await supabase
-      .from("patients")
-      .select("id")
-      .eq("famille_user_id", req.user.userId)
-      .single();
-    patientId = patient?.id;
-  }
-  
-  if (!patientId) return res.status(404).json({ error: "Patient non trouvé" });
-  
-  const { error } = await supabase
-    .from("patients")
-    .update({ adresse, notes_medicales })
-    .eq("id", patientId);
-  
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ status: "success" });
-});
 
-// ============================================================
-// 📸 8. METTRE À JOUR LA PHOTO DU PATIENT
-// ============================================================
-router.post("/update-photo", middleware(["FAMILLE", "COORDINATEUR"]), upload.single('photo'), async (req, res) => {
   try {
-    const file = req.file;
-    if (!file) return res.status(400).json({ error: "Aucune photo" });
-    
-    let patientId = req.body.patient_id;
-    
     if (req.user.role === "FAMILLE" && !patientId) {
       const { data: patient } = await supabase
         .from("patients")
         .select("id")
         .eq("famille_user_id", req.user.userId)
-        .single();
+        .maybeSingle();
+
       patientId = patient?.id;
     }
-    
-    if (!patientId) return res.status(404).json({ error: "Patient non trouvé" });
-    
+
+    if (!patientId) {
+      return res.status(404).json({ error: "Patient non trouvé" });
+    }
+
+    const canAccess = await hasAccessToPatient(
+      patientId,
+      req.user.userId,
+      req.user.role
+    );
+
+    if (!canAccess) {
+      return res.status(403).json({ error: "Accès non autorisé à ce dossier patient" });
+    }
+
+    const { error } = await supabase
+      .from("patients")
+      .update({ adresse, notes_medicales })
+      .eq("id", patientId);
+
+    if (error) throw error;
+
+    res.json({ status: "success" });
+  } catch (err) {
+    console.error("❌ Erreur update-info:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ============================================================
+// 📸 8. METTRE À JOUR LA PHOTO DU PATIENT
+// ============================================================
+router.post("/update-photo", middleware(["FAMILLE", "COORDINATEUR"]), upload.single("photo"), async (req, res) => {
+  try {
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({ error: "Aucune photo" });
+    }
+
+    let patientId = req.body.patient_id;
+
+    if (req.user.role === "FAMILLE" && !patientId) {
+      const { data: patient } = await supabase
+        .from("patients")
+        .select("id")
+        .eq("famille_user_id", req.user.userId)
+        .maybeSingle();
+
+      patientId = patient?.id;
+    }
+
+    if (!patientId) {
+      return res.status(404).json({ error: "Patient non trouvé" });
+    }
+
+    const canAccess = await hasAccessToPatient(
+      patientId,
+      req.user.userId,
+      req.user.role
+    );
+
+    if (!canAccess) {
+      return res.status(403).json({ error: "Accès non autorisé à ce dossier patient" });
+    }
+
     const fileName = `patients/${patientId}_${Date.now()}.jpg`;
-    await supabase.storage.from("photos").upload(fileName, file.buffer, {
-      contentType: 'image/jpeg',
-      upsert: true
-    });
-    
-    const { data: urlData } = supabase.storage.from("photos").getPublicUrl(fileName);
+
+    const { error: uploadError } = await supabase.storage
+      .from("photos")
+      .upload(fileName, file.buffer, {
+        contentType: file.mimetype || "image/jpeg",
+        upsert: true
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { data: urlData } = supabase.storage
+      .from("photos")
+      .getPublicUrl(fileName);
+
     const photo_url = urlData.publicUrl;
-    
-    await supabase.from("patients").update({ photo_url }).eq("id", patientId);
-    
+
+    const { error: updateError } = await supabase
+      .from("patients")
+      .update({ photo_url })
+      .eq("id", patientId);
+
+    if (updateError) throw updateError;
+
     res.json({ photo_url });
   } catch (err) {
     console.error("❌ Erreur update-photo:", err.message);
@@ -238,58 +349,76 @@ router.post("/update-photo", middleware(["FAMILLE", "COORDINATEUR"]), upload.sin
 });
 
 /**
- * ✏️ Mettre à jour toutes les infos du patient (complet)
+ * ✏️ Mettre à jour toutes les infos du patient complet
  */
 router.put("/update-full-info", middleware(["FAMILLE", "COORDINATEUR"]), async (req, res) => {
-    const { 
-        prenom, 
-        nom, 
-        age, 
-        sexe, 
-        telephone, 
-        adresse, 
-        contact_urgence, 
-        traitements, 
-        allergies,
-        notes_medicales 
-    } = req.body;
-    
-    let patientId = req.body.patient_id;
-    
-    if (req.user.role === "FAMILLE" && !patientId) {
-        const { data: patient } = await supabase
-            .from("patients")
-            .select("id")
-            .eq("famille_user_id", req.user.userId)
-            .single();
-        patientId = patient?.id;
-    }
-    
-    if (!patientId) return res.status(404).json({ error: "Patient non trouvé" });
-    
-    const nomComplet = `${prenom || ''} ${nom || ''}`.trim();
-    
-    const { error } = await supabase
-        .from("patients")
-        .update({ 
-            prenom, 
-            nom, 
-            nom_complet: nomComplet,
-            age, 
-            sexe, 
-            telephone, 
-            adresse, 
-            contact_urgence, 
-            traitements, 
-            allergies,
-            notes_medicales
-        })
-        .eq("id", patientId);
-    
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ status: "success" });
-});
+  const {
+    prenom,
+    nom,
+    age,
+    sexe,
+    telephone,
+    adresse,
+    contact_urgence,
+    traitements,
+    allergies,
+    notes_medicales
+  } = req.body;
 
+  let patientId = req.body.patient_id;
+
+  try {
+    if (req.user.role === "FAMILLE" && !patientId) {
+      const { data: patient } = await supabase
+        .from("patients")
+        .select("id")
+        .eq("famille_user_id", req.user.userId)
+        .maybeSingle();
+
+      patientId = patient?.id;
+    }
+
+    if (!patientId) {
+      return res.status(404).json({ error: "Patient non trouvé" });
+    }
+
+    const canAccess = await hasAccessToPatient(
+      patientId,
+      req.user.userId,
+      req.user.role
+    );
+
+    if (!canAccess) {
+      return res.status(403).json({ error: "Accès non autorisé à ce dossier patient" });
+    }
+
+    const nomComplet = `${prenom || ""} ${nom || ""}`.trim();
+
+    const { error } = await supabase
+      .from("patients")
+      .update({
+        prenom,
+        nom,
+        nom_complet: nomComplet,
+        age,
+        sexe,
+        telephone,
+        adresse,
+        contact_urgence,
+        traitements,
+        allergies,
+        notes_medicales
+      })
+      .eq("id", patientId);
+
+    if (error) throw error;
+
+    res.json({ status: "success" });
+  } catch (err) {
+    console.error("❌ Erreur update-full-info:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 
 // ============================================================
