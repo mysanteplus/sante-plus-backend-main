@@ -103,18 +103,68 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
                 .eq("transaction_id", transactionId)
                 .single();
             
-            const patientId = metadata.patient_id || pending?.patient_id;
-            const durationMonths = metadata.duration_months || pending?.duration_months || 1;
-            const packName = metadata.pack_name || pending?.pack_name || 'Standard';
-            
-            if (!patientId) {
-                console.error("❌ Pas de patient_id");
-                return res.sendStatus(200);
-            }
+                const patientId = metadata.patient_id || pending?.patient_id || null;
+                const userId = metadata.user_id || pending?.user_id || null;
+                const durationMonths = metadata.duration_months || pending?.duration_months || 1;
+                const packName = metadata.pack_name || metadata.pack_type || pending?.pack_name || "Standard";
+                const isConfortPack = packName === "CONFORT_247";
+                
+                if (!patientId && !userId) {
+                    console.error("❌ Aucun patient_id ni user_id trouvé pour la transaction");
+                    return res.sendStatus(200);
+                }
             
             const paymentDate = new Date();
             const endDate = calculateSubscriptionEndDate(paymentDate, durationMonths, 5);
             const monthYear = paymentDate.toLocaleDateString("fr-FR", { month: "2-digit", year: "numeric" });
+
+            if (isConfortPack && userId) {
+                const { error: aboErr } = await supabase
+                    .from("abonnements")
+                    .insert([{
+                        user_id: userId,
+                        patient_id: null,
+                        mois_annee: monthYear,
+                        montant_du: amount,
+                        montant_paye: amount,
+                        statut: "Payé",
+                        type_pack: "CONFORT_247",
+                        date_paiement: paymentDate.toISOString(),
+                        date_fin_abonnement: endDate.toISOString(),
+                        duree_mois: durationMonths,
+                        reference_paiement: transactionId,
+                        mode_paiement: "FEDAPAY"
+                    }]);
+            
+                if (aboErr) throw aboErr;
+            
+                await supabase
+                    .from("profiles")
+                    .update({
+                        pack_confort_actif: true,
+                        date_fin_pack_confort: endDate.toISOString()
+                    })
+                    .eq("id", userId);
+            
+                if (pending?.id) {
+                    await supabase
+                        .from("pending_transactions")
+                        .update({ status: "COMPLETED" })
+                        .eq("id", pending.id);
+                }
+            
+                await createNotification(
+                    userId,
+                    "💎 Pack Confort activé",
+                    `Votre Pack Confort 24/7 est maintenant actif.`,
+                    "payment",
+                    "/#billing"
+                );
+            
+                console.log(`✅ Pack Confort activé pour ${userId}`);
+            
+                return res.sendStatus(200);
+            }
             
             const { error: aboErr } = await supabase
                 .from("abonnements")
@@ -611,11 +661,96 @@ router.post("/family-pay", middleware(["FAMILLE"]), async (req, res) => {
     }
 });
 
+
+
+router.post("/init-confort-payment", middleware(["FAMILLE"]), async (req, res) => {
+    const userId = req.user.userId;
+    const { montant, duree_mois } = req.body;
+
+    try {
+        const { data: profile, error: profileErr } = await supabase
+            .from("profiles")
+            .select("id, nom, email, type_compte")
+            .eq("id", userId)
+            .single();
+
+        if (profileErr) throw profileErr;
+
+        if (profile.type_compte !== "SANS_PATIENT") {
+            return res.status(403).json({
+                error: "Ce pack est réservé aux comptes sans patient"
+            });
+        }
+
+        const duration = duree_mois || 1;
+        const amount = montant || PACKS.CONFORT_247.price * duration;
+
+        const fedapayResponse = await axios.post(process.env.FEDAPAY_PROXY_URL, {
+            amount: amount,
+            description: `Pack Confort 24/7 - ${duration} mois`,
+            customer_email: profile.email,
+            customer_firstname: profile.nom?.split(" ")[0] || "Client",
+            customer_lastname: profile.nom?.split(" ").slice(1).join(" ") || "Santé Plus",
+            callback_url: `${process.env.API_URL}/api/billing/webhook`,
+            cancel_url: "https://stevenckohr-pixel.github.io/#billing?status=cancel",
+            metadata: {
+                user_id: userId,
+                type_compte: "SANS_PATIENT",
+                pack_type: "CONFORT_247",
+                duration_months: duration,
+                amount: amount
+            }
+        }, {
+            timeout: 30000
+        });
+
+        const paymentUrl = fedapayResponse.data?.payment_url;
+        const transactionId = fedapayResponse.data?.transaction_id;
+
+        if (!paymentUrl || !transactionId) {
+            return res.status(500).json({
+                error: "Réponse FedaPay incomplète"
+            });
+        }
+
+        await supabase
+            .from("pending_transactions")
+            .insert([{
+                user_id: userId,
+                patient_id: null,
+                transaction_id: transactionId,
+                amount: amount,
+                duration_months: duration,
+                pack_name: "CONFORT_247",
+                status: "PENDING",
+                created_at: new Date()
+            }]);
+
+        res.json({
+            success: true,
+            payment_url: paymentUrl,
+            transaction_id: transactionId
+        });
+
+    } catch (err) {
+        console.error("❌ Erreur init-confort-payment:", err.response?.data || err.message);
+        res.status(500).json({
+            error: err.response?.data?.error || err.message || "Impossible d'initier le paiement Pack Confort"
+        });
+    }
+});
+
 // ============================================================
 // 💳 7. SOUSCRIRE AU PACK CONFORT 24/7 (comptes SANS_PATIENT)
 // ============================================================
 
 router.post("/subscribe-confort", middleware(["FAMILLE"]), async (req, res) => {
+    if (process.env.NODE_ENV === "production") {
+        return res.status(403).json({
+            error: "Route désactivée en production. Utilisez init-confort-payment."
+        });
+    }
+    
     const { montant, duree_mois } = req.body;
     const userId = req.user.userId;
     
