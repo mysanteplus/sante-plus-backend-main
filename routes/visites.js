@@ -1,3 +1,5 @@
+// routes/visites.js - VERSION COMPLÈTE CORRIGÉE
+
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
@@ -8,7 +10,9 @@ const multer = require("multer");
 const upload = multer({ storage: multer.memoryStorage() });
 const { getRealtimeChannel } = require("../utils");
 
-// Optionnel : logger la structure pour vérifier
+// ============================================================
+// LOGGER POUR VÉRIFIER LA STRUCTURE
+// ============================================================
 (async () => {
     const { data, error } = await supabase
         .from("visites")
@@ -22,7 +26,25 @@ const { getRealtimeChannel } = require("../utils");
 })();
 
 // ============================================================
-// ▶️ 1. DÉMARRER UNE VISITE
+// FONCTION UTILITAIRE DE CALCUL DE DISTANCE
+// ============================================================
+function getDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371e3;
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δφ = (lat2 - lat1) * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c;
+}
+
+// ============================================================
+// 1. DÉMARRER UNE VISITE (AIDANT UNIQUEMENT)
 // ============================================================
 router.post("/start", middleware(["AIDANT"]), async (req, res) => {
     const { patient_id, gps_start } = req.body;
@@ -88,6 +110,7 @@ router.post("/start", middleware(["AIDANT"]), async (req, res) => {
                 .eq("id", planning.id);
         }
 
+        // Envoyer l'événement Realtime
         try {
             const channel = getRealtimeChannel();
             await channel.send({
@@ -107,7 +130,7 @@ router.post("/start", middleware(["AIDANT"]), async (req, res) => {
             console.warn("⚠️ Erreur envoi Realtime:", realtimeErr.message);
         }
 
-         // Notifier la famille : notification interne + push système
+        // Notifier la famille
         if (visite.patient?.famille_user_id) {
             await createNotification(
                 visite.patient.famille_user_id,
@@ -127,7 +150,7 @@ router.post("/start", middleware(["AIDANT"]), async (req, res) => {
 });
 
 // ============================================================
-// ⏹️ 2. TERMINER UNE VISITE (AVEC AUTO-FEED)
+// 2. TERMINER UNE VISITE (AIDANT UNIQUEMENT)
 // ============================================================
 router.post("/end", middleware(["AIDANT"]), upload.single('photo_visite'), async (req, res) => {
     const { visite_id, activites_faites, notes, gps_end, humeur } = req.body;
@@ -161,6 +184,7 @@ router.post("/end", middleware(["AIDANT"]), upload.single('photo_visite'), async
 
         if (updateError) throw updateError;
 
+        // Ajouter les messages dans le feed
         await supabase.from("messages").insert([{
             patient_id: v.patient_id,
             sender_id: req.user.userId,
@@ -175,6 +199,7 @@ router.post("/end", middleware(["AIDANT"]), upload.single('photo_visite'), async
             is_photo: false
         }]);
 
+        // Envoyer l'événement Realtime
         const channel = getRealtimeChannel();
         await channel.send({
             type: 'broadcast',
@@ -190,15 +215,16 @@ router.post("/end", middleware(["AIDANT"]), upload.single('photo_visite'), async
         });
         console.log("📡 [REALTIME] Événement 'visite_ended' envoyé");
 
+        // Notifier la famille
         if (v.patient?.famille_user_id) {
-    await createNotification(
-        v.patient.famille_user_id,
-        "📸 Rapport de visite disponible",
-        `L'intervention pour ${v.patient.nom_complet} est terminée. Une photo est disponible.`,
-        "visit",
-        "/#feed"
-    );
-}
+            await createNotification(
+                v.patient.famille_user_id,
+                "📸 Rapport de visite disponible",
+                `L'intervention pour ${v.patient.nom_complet} est terminée. Une photo est disponible.`,
+                "visit",
+                "/#feed"
+            );
+        }
         
         res.json({ status: "success" });
     } catch (err) {
@@ -208,7 +234,7 @@ router.post("/end", middleware(["AIDANT"]), upload.single('photo_visite'), async
 });
 
 // ============================================================
-// ✅ 3. VALIDER UNE VISITE (Coordinateur)
+// 3. VALIDER UNE VISITE (COORDINATEUR UNIQUEMENT)
 // ============================================================
 router.post("/validate", middleware(["COORDINATEUR"]), async (req, res) => {
     const { visite_id, statut } = req.body;
@@ -223,34 +249,36 @@ router.post("/validate", middleware(["COORDINATEUR"]), async (req, res) => {
 
         if (error) throw error;
 
+        // Envoyer l'événement Realtime
         try {
             const channel = getRealtimeChannel();
             await channel.send({
                 type: 'broadcast',
                 event: 'visite_updated',
-                    payload: {
-                        id: visite.id,
-                        patient_id: visite.patient_id,
-                        statut: statut,
-                        action: statut === "Validé" ? "validated" : "rejected",
-                        patient_nom: visite.patient?.nom_complet,
-                        updated_at: new Date().toISOString()
-                    }
+                payload: {
+                    id: visite.id,
+                    patient_id: visite.patient_id,
+                    statut: statut,
+                    action: statut === "Validé" ? "validated" : "rejected",
+                    patient_nom: visite.patient?.nom_complet,
+                    updated_at: new Date().toISOString()
+                }
             });
             console.log(`📡 [REALTIME] Événement 'visite_${statut === "Validé" ? "validated" : "rejected"}' envoyé`);
         } catch (realtimeErr) {
             console.warn("⚠️ Erreur envoi Realtime:", realtimeErr.message);
         }
 
-     if (statut === "Validé" && visite.patient?.famille_user_id) {
-    await createNotification(
-        visite.patient.famille_user_id,
-        "✅ Bilan validé par la coordination",
-        `Le rapport de visite pour ${visite.patient.nom_complet} a été certifié conforme.`,
-        "visit",
-        "/#feed"
-    );
-}
+        // Notifier la famille
+        if (statut === "Validé" && visite.patient?.famille_user_id) {
+            await createNotification(
+                visite.patient.famille_user_id,
+                "✅ Bilan validé par la coordination",
+                `Le rapport de visite pour ${visite.patient.nom_complet} a été certifié conforme.`,
+                "visit",
+                "/#feed"
+            );
+        }
 
         res.json({ status: "success" });
     } catch (err) {
@@ -260,7 +288,7 @@ router.post("/validate", middleware(["COORDINATEUR"]), async (req, res) => {
 });
 
 // ============================================================
-// 📂 4. LIRE LES VISITES (Filtrage avec vérification d'abonnement)
+// 4. LIRE LES VISITES (TOUS LES RÔLES AVEC FILTRES)
 // ============================================================
 router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, res) => {
     try {
@@ -280,6 +308,7 @@ router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, r
             aidant:aidant_id (id, nom, photo_url)
         `);
 
+        // Filtres selon le rôle
         if (req.user.role === "AIDANT") {
             query = query.eq("aidant_id", req.user.userId);
         } 
@@ -310,12 +339,15 @@ router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, r
 });
 
 // ============================================================
-// 🛰️ TRACKING GPS
+// 5. TRACKING GPS (AIDANT UNIQUEMENT)
 // ============================================================
-router.post("/track", middleware(['AIDANT']), async (req, res) => {
+router.post("/track", middleware(["AIDANT"]), async (req, res) => {
     const { visite_id, lat, lng, accuracy } = req.body;
     
+    console.log(`📍 [TRACK] Visite ${visite_id}, Pos: ${lat}, ${lng}, Précision: ${accuracy}m`);
+
     try {
+        // Enregistrer la position
         await supabase.from("positions_live").insert([{
             visite_id,
             aidant_id: req.user.userId,
@@ -325,6 +357,7 @@ router.post("/track", middleware(['AIDANT']), async (req, res) => {
             created_at: new Date()
         }]);
 
+        // Récupérer les infos de la visite
         const { data: visite, error: visitError } = await supabase
             .from("visites")
             .select(`
@@ -343,10 +376,12 @@ router.post("/track", middleware(['AIDANT']), async (req, res) => {
             return res.sendStatus(200);
         }
 
+        // Vérifier le géofencing
         if (visite.patient && visite.patient.lat) {
             const distance = getDistance(lat, lng, visite.patient.lat, visite.patient.lng);
             const rayonAutorise = visite.patient.rayon_geofence || 100;
 
+            // Alerte si hors zone
             if (distance > rayonAutorise && !visite.alerte_geofence) {
                 await supabase
                     .from("visites")
@@ -355,6 +390,7 @@ router.post("/track", middleware(['AIDANT']), async (req, res) => {
                         distance_max_constatee: distance 
                     })
                     .eq("id", visite_id);
+                console.log(`⚠️ [GEOFENCE] Hors zone: ${Math.round(distance)}m > ${rayonAutorise}m`);
             } else if (distance <= rayonAutorise && visite.alerte_geofence) {
                 await supabase
                     .from("visites")
@@ -362,6 +398,7 @@ router.post("/track", middleware(['AIDANT']), async (req, res) => {
                     .eq("id", visite_id);
             }
 
+            // Notification d'arrivée
             const alreadyNotified = visite.notifie_arrivee;
             const seuilNotification = 50;
             
@@ -370,8 +407,6 @@ router.post("/track", middleware(['AIDANT']), async (req, res) => {
                     .from("visites")
                     .update({ notifie_arrivee: true })
                     .eq("id", visite_id);
-                
-                const message = `🩺 ${visite.aidant?.nom || "L'aidant"} est arrivé${distance < 20 ? ' devant le domicile' : ' dans le quartier'} de ${visite.patient.nom_complet}.`;
                 
                 await createNotification(
                     visite.patient.famille_user_id,
@@ -401,25 +436,7 @@ router.post("/track", middleware(['AIDANT']), async (req, res) => {
 });
 
 // ============================================================
-// 📏 Calcul de distance (Haversine)
-// ============================================================
-function getDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371e3;
-    const φ1 = lat1 * Math.PI / 180;
-    const φ2 = lat2 * Math.PI / 180;
-    const Δφ = (lat2 - lat1) * Math.PI / 180;
-    const Δλ = (lon2 - lon1) * Math.PI / 180;
-
-    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-              Math.cos(φ1) * Math.cos(φ2) *
-              Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-    return R * c;
-}
-
-// ============================================================
-// 📡 RADAR LIVE (Coordinateur)
+// 6. RADAR LIVE (COORDINATEUR UNIQUEMENT)
 // ============================================================
 router.get("/live-tracking", middleware(['COORDINATEUR']), async (req, res) => {
     try {
@@ -469,7 +486,7 @@ router.get("/live-tracking", middleware(['COORDINATEUR']), async (req, res) => {
 });
 
 // ============================================================
-// 🏠 POSITION ACTIVE POUR LA FAMILLE
+// 7. POSITION ACTIVE POUR LA FAMILLE
 // ============================================================
 router.get("/active/:patientId", middleware(["FAMILLE", "COORDINATEUR"]), async (req, res) => {
     const { patientId } = req.params;
@@ -523,7 +540,7 @@ router.get("/active/:patientId", middleware(["FAMILLE", "COORDINATEUR"]), async 
 });
 
 // ============================================================
-// 📍 TRAJECTOIRE D'UNE VISITE
+// 8. TRAJECTOIRE D'UNE VISITE (COORDINATEUR UNIQUEMENT)
 // ============================================================
 router.get("/trajectory/:visite_id", middleware(['COORDINATEUR']), async (req, res) => {
     try {
@@ -540,7 +557,7 @@ router.get("/trajectory/:visite_id", middleware(['COORDINATEUR']), async (req, r
 });
 
 // ============================================================
-// 📍 POSITION EN DIRECT POUR LA FAMILLE
+// 9. POSITION EN DIRECT POUR LA FAMILLE
 // ============================================================
 router.get("/live-position/:visite_id", middleware(["FAMILLE", "COORDINATEUR"]), async (req, res) => {
     const { visite_id } = req.params;
@@ -590,7 +607,7 @@ router.get("/live-position/:visite_id", middleware(["FAMILLE", "COORDINATEUR"]),
 });
 
 // ============================================================
-// 📊 1. RÉCUPÉRER TOUS LES AIDANTS ACTIFS (Coordinateur)
+// 10. RÉCUPÉRER TOUS LES AIDANTS ACTIFS (COORDINATEUR)
 // ============================================================
 router.get("/active-aidants", middleware(['COORDINATEUR']), async (req, res) => {
     try {
@@ -635,7 +652,7 @@ router.get("/active-aidants", middleware(['COORDINATEUR']), async (req, res) => 
 
             let distanceToPatient = null;
             if (lastPos && visit.patient?.lat && visit.patient?.lng) {
-                distanceToPatient = calculateDistance(
+                distanceToPatient = getDistance(
                     lastPos.lat, lastPos.lng,
                     visit.patient.lat, visit.patient.lng
                 );
@@ -658,7 +675,7 @@ router.get("/active-aidants", middleware(['COORDINATEUR']), async (req, res) => 
 });
 
 // ============================================================
-// 📜 2. HISTORIQUE DES POSITIONS D'UN AIDANT (Coordinateur)
+// 11. HISTORIQUE DES POSITIONS D'UN AIDANT (COORDINATEUR)
 // ============================================================
 router.get("/aidant-history/:aidantId", middleware(['COORDINATEUR']), async (req, res) => {
     const { aidantId } = req.params;
@@ -697,7 +714,7 @@ router.get("/aidant-history/:aidantId", middleware(['COORDINATEUR']), async (req
 });
 
 // ============================================================
-// 🚨 3. RÉCUPÉRER TOUTES LES ALERTES GEOFENCE
+// 12. RÉCUPÉRER TOUTES LES ALERTES GEOFENCE (COORDINATEUR)
 // ============================================================
 router.get("/geofence-alerts", middleware(['COORDINATEUR']), async (req, res) => {
     try {
@@ -734,7 +751,7 @@ router.get("/geofence-alerts", middleware(['COORDINATEUR']), async (req, res) =>
 });
 
 // ============================================================
-// 📍 4. RÉCUPÉRER TOUS LES DOMICILES PATIENTS
+// 13. RÉCUPÉRER TOUS LES DOMICILES PATIENTS (COORDINATEUR)
 // ============================================================
 router.get("/patients-locations", middleware(['COORDINATEUR']), async (req, res) => {
     try {
@@ -763,25 +780,7 @@ router.get("/patients-locations", middleware(['COORDINATEUR']), async (req, res)
 });
 
 // ============================================================
-// 📏 Fonction de calcul de distance (Haversine)
-// ============================================================
-function calculateDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371e3;
-    const φ1 = lat1 * Math.PI / 180;
-    const φ2 = lat2 * Math.PI / 180;
-    const Δφ = (lat2 - lat1) * Math.PI / 180;
-    const Δλ = (lon2 - lon1) * Math.PI / 180;
-
-    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-              Math.cos(φ1) * Math.cos(φ2) *
-              Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-    return R * c;
-}
-
-// ============================================================
-// 🔔 ENVOI DE NOTIFICATION
+// 14. ENVOI DE NOTIFICATION (TOUS RÔLES)
 // ============================================================
 router.post("/send", middleware(), async (req, res) => {
     const { userId, title, message, type, url } = req.body;
@@ -797,13 +796,13 @@ router.post("/send", middleware(), async (req, res) => {
         
         res.json({ status: "success" });
     } catch (err) {
-        console.error("Erreur envoi notification:", err);
+        console.error("❌ Erreur envoi notification:", err);
         res.status(500).json({ error: err.message });
     }
 });
 
 // ============================================================
-// 🧪 ROUTE DE TEST REALTIME
+// 15. TEST REALTIME
 // ============================================================
 router.post("/test-realtime", middleware(), async (req, res) => {
     try {
@@ -830,7 +829,7 @@ router.post("/test-realtime", middleware(), async (req, res) => {
 });
 
 // ============================================================
-// 📊 GET - Progression des visites pour une maman
+// 16. PROGRESSION DES VISITES (MAMAN)
 // ============================================================
 router.get("/progress/:patientId", middleware(["FAMILLE", "COORDINATEUR"]), async (req, res) => {
     const { patientId } = req.params;
