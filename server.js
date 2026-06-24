@@ -96,7 +96,7 @@ app.use(cors({
 app.get("/", (req, res) => res.send("🚀 Santé Plus Services API opérationnelle"));
 
 // ============================================================
-// ROUTES DE NOTIFICATIONS
+// ROUTES DE NOTIFICATIONS (PROTÉGÉES - TOUS LES RÔLES)
 // ============================================================
 
 app.post('/api/notifications/send', middleware(), async (req, res) => {
@@ -130,7 +130,6 @@ app.post('/api/notifications/send', middleware(), async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-
 
 app.post('/api/save-push-token', middleware(), async (req, res) => {
     try {
@@ -219,32 +218,74 @@ const commandesRoutes = require("./routes/commandes");
 const planningRoutes = require("./routes/planning");
 const educationRoutes = require("./routes/education");
 const adminUsersRoutes = require("./routes/admin-users");
- 
+
 // ============================================================
-// ROUTES
+// ROUTES AVEC PROTECTION ADMIN (TOUTES LES ROUTES ADMIN)
 // ============================================================
+
+// ✅ ROUTES ADMIN SETUP (PROTÉGÉES - COORDINATEUR UNIQUEMENT)
+app.use("/api/admin-setup/admins", middleware(["COORDINATEUR"]));
+app.use("/api/admin-setup/admin", middleware(["COORDINATEUR"]));
+
+// ✅ ROUTES ADMIN USERS (PROTÉGÉES - COORDINATEUR UNIQUEMENT)
+app.use("/api/admin-users/all-profiles", middleware(["COORDINATEUR"]));
+app.use("/api/admin-users/all-patients", middleware(["COORDINATEUR"]));
+app.use("/api/admin-users/profile", middleware(["COORDINATEUR"]));
+app.use("/api/admin-users/patient", middleware(["COORDINATEUR"]));
+app.use("/api/admin-users/create-user", middleware(["COORDINATEUR"]));
+app.use("/api/admin-users/reset-password", middleware(["COORDINATEUR"]));
+app.use("/api/admin-users/user", middleware(["COORDINATEUR"]));
+
+// ✅ ROUTES ADMIN (PROTÉGÉES - COORDINATEUR UNIQUEMENT)
+app.use("/api/admin/validate-member", middleware(["COORDINATEUR"]));
+app.use("/api/admin/pending-registrations", middleware(["COORDINATEUR"]));
+
+// ============================================================
+// ROUTES PAR RÔLE
+// ============================================================
+
+// ✅ ROUTES AUTH (PUBLIQUES SAUF create-member)
 app.use("/api/auth", authRoutes);
-app.use("/api/billing", billingRoutes);
-app.use("/api/admin-setup", adminSetupRoutes);
-app.use("/api/dashboard", dashboardRoutes);
-app.use("/api/admin", adminRoutes);
-app.use("/api/aidants", aidantRoutes);
-app.use("/api/patients", patientRoutes);
-app.use("/api/assignments", assignmentRoutes);
-app.use("/api/visites", visitesRoutes);
-app.use("/api/messages", messagesRoutes);
-app.use("/api/commandes", commandesRoutes);
-app.use("/api/planning", planningRoutes);
-app.use("/api/notifications", notificationsRoutes);
-app.use("/api/educational", educationRoutes);
+
+// ✅ ROUTES AIDANTS (PROTÉGÉES - COORDINATEUR ET AIDANT)
+app.use("/api/aidants", middleware(["COORDINATEUR", "AIDANT"]));
+
+// ✅ ROUTES ASSIGNMENTS (PROTÉGÉES - COORDINATEUR ET AIDANT)
+app.use("/api/assignments", middleware(["COORDINATEUR", "AIDANT"]));
+
+// ✅ ROUTES PLANNING (PROTÉGÉES - COORDINATEUR ET AIDANT)
+app.use("/api/planning", middleware(["COORDINATEUR", "AIDANT"]));
+
+// ✅ ROUTES COMMANDES (PROTÉGÉES - TOUS LES RÔLES)
+app.use("/api/commandes", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]));
+
+// ✅ ROUTES VISITES (PROTÉGÉES - TOUS LES RÔLES)
+app.use("/api/visites", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]));
+
+// ✅ ROUTES PATIENTS (PROTÉGÉES - TOUS LES RÔLES)
+app.use("/api/patients", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]));
+
+// ✅ ROUTES MESSAGES (PROTÉGÉES - TOUS LES RÔLES)
+app.use("/api/messages", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]));
+
+// ✅ ROUTES DASHBOARD (PROTÉGÉES - TOUS LES RÔLES)
+app.use("/api/dashboard", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]));
+
+// ✅ ROUTES BILLING (PROTÉGÉES - TOUS LES RÔLES)
+app.use("/api/billing", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]));
+
+// ✅ ROUTES NOTIFICATIONS (PROTÉGÉES - TOUS LES RÔLES)
+app.use("/api/notifications", middleware());
+
+// ✅ ROUTES EDUCATIONAL (PROTÉGÉES - TOUS LES RÔLES)
+app.use("/api/educational", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]));
+
+// ============================================================
+// ROUTES PUBLIQUES (SANS PROTECTION)
+// ============================================================
+
+// ✅ Kikiapay (public - webhooks)
 app.use("/api/kikiapay", require("./routes/kikiapay"));
-app.use("/api/admin-users", adminUsersRoutes);
-
-// ============================================================
-// DÉMARRAGE
-// ============================================================
-startCronJobs();
-
 
 // ============================================================
 // ROUTE DE TEST POUR NOTIFICATIONS PUSH
@@ -275,6 +316,11 @@ app.get("/api/test-notification/:userId", async (req, res) => {
     });
   }
 });
+
+// ============================================================
+// DÉMARRAGE
+// ============================================================
+startCronJobs();
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
