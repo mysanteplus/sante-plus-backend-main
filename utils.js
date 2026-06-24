@@ -1,5 +1,4 @@
-// utils.js - VERSION PRODUCTION CORRIGÉE
-
+ 
 const axios = require("axios");
 const supabase = require("./supabaseClient");
 
