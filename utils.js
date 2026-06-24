@@ -1,16 +1,12 @@
+// utils.js - VERSION PRODUCTION CORRIGÉE
+
 const axios = require("axios");
 const supabase = require("./supabaseClient");
 
-/**
- * 🔔 ENVOYER UNE NOTIFICATION PUSH FIREBASE UNIQUEMENT
- * 
- * Important :
- * Cette fonction NE crée PAS de ligne dans la table notifications.
- * Elle envoie seulement la notification système via Firebase.
- * 
- * Pour créer une notification complète :
- * utilise createNotification() dans routes/notifications.js
- */
+// ============================================================
+// 🔔 NOTIFICATIONS PUSH
+// ============================================================
+
 async function sendPushNotification(userId, title, message, url = "/") {
   try {
     const { data: profile, error } = await supabase
@@ -49,9 +45,10 @@ async function sendPushNotification(userId, title, message, url = "/") {
   }
 }
 
-/**
- * 📧 ENVOYER UN EMAIL VIA BREVO API
- */
+// ============================================================
+// 📧 EMAIL VIA BREVO
+// ============================================================
+
 async function sendEmailAPI(toEmail, subject, htmlContent) {
   if (!process.env.BREVO_API_KEY) {
     console.error("❌ Erreur : Clé API Brevo manquante dans le .env");
@@ -89,16 +86,9 @@ async function sendEmailAPI(toEmail, subject, htmlContent) {
 }
 
 // ============================================================
-// 📅 FONCTIONS DE GESTION DES ABONNEMENTS (AJOUTÉES)
+// 📅 GESTION DES ABONNEMENTS
 // ============================================================
 
-/**
- * 📅 CALCULER LA DATE DE FIN D'ABONNEMENT (selon la durée)
- * @param {Date} startDate - Date de début
- * @param {number} durationMonths - Durée en mois (1, 3, 6, 12)
- * @param {number} graceDays - Jours de grâce (5 par défaut)
- * @returns {Date} Date de fin
- */
 function calculateSubscriptionEndDate(startDate, durationMonths, graceDays = 5) {
   const endDate = new Date(startDate);
   endDate.setMonth(endDate.getMonth() + durationMonths);
@@ -106,11 +96,6 @@ function calculateSubscriptionEndDate(startDate, durationMonths, graceDays = 5) 
   return endDate;
 }
 
-/**
- * 📊 CALCULER LES JOURS RESTANTS
- * @param {Date|string} endDate - Date de fin
- * @returns {number} Nombre de jours restants
- */
 function getDaysRemaining(endDate) {
   if (!endDate) return 0;
   const today = new Date();
@@ -119,52 +104,35 @@ function getDaysRemaining(endDate) {
   return diffDays > 0 ? diffDays : 0;
 }
 
-/**
- * 🔒 VÉRIFIER SI L'ABONNEMENT EST VALIDE
- * @param {Date|string} endDate - Date de fin
- * @returns {boolean} true si valide
- */
 function isSubscriptionValid(endDate) {
   if (!endDate) return false;
   const today = new Date();
   return today <= new Date(endDate);
 }
 
-/**
- * 📦 Récupérer la durée en mois selon l'ID du pack
- * @param {string} packId - ID du pack (ex: MENSUEL, TRIMESTRIEL, ANNUEL)
- * @returns {number} Durée en mois
- */
 function getDurationFromPack(packId) {
   if (!packId) return 1;
   if (packId.includes('TRIMESTRIEL') || packId.includes('trimestriel')) return 3;
   if (packId.includes('SEMESTRIEL') || packId.includes('semestriel')) return 6;
   if (packId.includes('ANNUEL') || packId.includes('annuel')) return 12;
-  return 1; // MENSUEL par défaut
+  return 1;
 }
 
-/**
- * 💰 Calculer le prix avec réduction selon la durée
- * @param {number} basePrice - Prix mensuel de base
- * @param {number} durationMonths - Durée en mois
- * @returns {number} Prix total avec réduction
- */
 function calculateDiscountedPrice(basePrice, durationMonths) {
   if (durationMonths === 3) {
-    return Math.round(basePrice * durationMonths * 0.95); // -5%
+    return Math.round(basePrice * durationMonths * 0.95);
   }
   if (durationMonths === 6) {
-    return Math.round(basePrice * durationMonths * 0.90); // -10%
+    return Math.round(basePrice * durationMonths * 0.90);
   }
   if (durationMonths === 12) {
-    return Math.round(basePrice * durationMonths * 0.85); // -15%
+    return Math.round(basePrice * durationMonths * 0.85);
   }
   return basePrice * durationMonths;
 }
 
-
 // ============================================================
-// 📡 REALTIME CHANNEL GLOBAL (BACKEND)
+// 📡 REALTIME
 // ============================================================
 
 let realtimeChannel = null;
@@ -172,19 +140,17 @@ let realtimeChannel = null;
 function getRealtimeChannel() {
   if (!realtimeChannel) {
     realtimeChannel = supabase.channel('global-channel');
-
     realtimeChannel.subscribe((status) => {
       console.log("📡 [Realtime Backend] Status:", status);
     });
   }
-
   return realtimeChannel;
 }
 
+// ============================================================
+// 🔒 VÉRIFICATION ABONNEMENT
+// ============================================================
 
-/**
- * 🔒 VÉRIFIER SI UN UTILISATEUR A UN ABONNEMENT ACTIF
- */
 async function checkActiveSubscription(userId, userRole) {
     // Les coordinateurs et aidants ont toujours accès
     if (userRole === "COORDINATEUR" || userRole === "AIDANT") {
@@ -192,7 +158,6 @@ async function checkActiveSubscription(userId, userRole) {
     }
     
     try {
-        // Récupérer le profil pour connaître le type de compte
         const { data: profile, error: profileErr } = await supabase
             .from("profiles")
             .select("type_compte, pack_confort_actif, date_fin_pack_confort")
@@ -201,7 +166,6 @@ async function checkActiveSubscription(userId, userRole) {
         
         if (profileErr) return false;
         
-        // Cas 1 : Compte AVEC_PATIENT (abonnement médical)
         if (profile?.type_compte === 'AVEC_PATIENT') {
             const { data: patient, error: patientErr } = await supabase
                 .from("patients")
@@ -211,10 +175,8 @@ async function checkActiveSubscription(userId, userRole) {
             
             if (patientErr || !patient) return false;
             
-            // Vérifier si le paiement est à jour
             if (patient.statut_paiement !== 'A jour') return false;
             
-            // Vérifier si la date de fin est dépassée
             if (patient.date_fin_abonnement) {
                 return new Date() <= new Date(patient.date_fin_abonnement);
             }
@@ -222,7 +184,6 @@ async function checkActiveSubscription(userId, userRole) {
             return true;
         }
         
-        // Cas 2 : Compte SANS_PATIENT (Pack Confort)
         if (profile?.type_compte === 'SANS_PATIENT') {
             if (!profile.pack_confort_actif) return false;
             if (!profile.date_fin_pack_confort) return false;
@@ -236,7 +197,6 @@ async function checkActiveSubscription(userId, userRole) {
         return false;
     }
 }
-
 
 // ============================================================
 // 📤 EXPORTS
