@@ -1,9 +1,11 @@
-// middleware.js - VERSION CORRIGÉE
+// middleware.js 
 const jwt = require("jsonwebtoken");
 
 module.exports = (allowedRoles = []) => {
   return (req, res, next) => {
+    // Récupérer le token depuis le header Authorization
     const token = req.headers["authorization"]?.split(" ")[1];
+    
     if (!token) {
       return res.status(401).json({ 
         error: "Non connecté",
@@ -12,6 +14,7 @@ module.exports = (allowedRoles = []) => {
     }
 
     try {
+      // Vérifier et décoder le token
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       req.user = decoded; // { userId, role }
       
