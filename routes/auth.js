@@ -1,3 +1,5 @@
+// routes/auth.js - VERSION COMPLÈTE CORRIGÉE
+
 const express = require("express");
 const router = express.Router();
 const jwt = require("jsonwebtoken");
@@ -10,15 +12,16 @@ const upload = multer({ storage: multer.memoryStorage() });
 const JWT_SECRET = process.env.JWT_SECRET;
 
 // ============================================================
-// 1. CONNEXION SÉCURISÉE (Avec 2FA optionnel pour Coordinateur)
+// 1. CONNEXION SÉCURISÉE
 // ============================================================
-// 1. CONNEXION SÉCURISÉE (Version Unique)
 router.post("/login", async (req, res) => {
   try {
     const email = (req.body.email || req.body.u || "").toLowerCase().trim();
     const password = req.body.password || req.body.p;
 
-    if (!email || !password) return res.status(400).json({ error: "Email et mot de passe requis" });
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email et mot de passe requis" });
+    }
 
     // A. Authentification Supabase
     const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
@@ -26,7 +29,9 @@ router.post("/login", async (req, res) => {
       password: password,
     });
 
-    if (authErr) return res.status(401).json({ error: "Identifiants invalides" });
+    if (authErr) {
+      return res.status(401).json({ error: "Identifiants invalides" });
+    }
 
     // B. Récupération du Profil
     const { data: profile, error: profErr } = await supabase
@@ -36,70 +41,88 @@ router.post("/login", async (req, res) => {
       .single();
 
     if (profErr || !profile) {
-      console.error("ERREUR LECTURE PROFIL SUPABASE :", profErr);
-      return res.status(404).json({ error: "Détails du profil introuvables. Contactez l'admin." });
+      console.error("❌ ERREUR LECTURE PROFIL:", profErr);
+      return res.status(404).json({ 
+        error: "Détails du profil introuvables. Contactez l'admin." 
+      });
     }
 
     // C. Vérification du statut_validation
     if (profile.statut_validation === 'EN_ATTENTE') {
-      return res.status(403).json({ error: "Votre compte est en attente de validation." });
+      return res.status(403).json({ 
+        error: "Votre compte est en attente de validation." 
+      });
+    }
+
+    if (profile.statut_validation === 'INACTIF') {
+      return res.status(403).json({ 
+        error: "Votre compte a été désactivé. Contactez l'administrateur." 
+      });
     }
 
     const userRole = (profile.role || "AIDANT").toUpperCase();
 
-    // C. Logique 2FA (Temporairement désactivée pour le développement)
-    const isDevMode = true; // 👈 Change en 'false' pour réactiver le 2FA plus tard
+    // D. Logique 2FA (désactivée pour le moment)
+    const isDevMode = true; // 👈 Passer à false pour activer le 2FA
 
     if (userRole === "COORDINATEUR" && !isDevMode) {
       const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
       const expires = new Date(Date.now() + 10 * 60000).toISOString();
 
-      await supabase.from("profiles").update({ reset_code: otpCode, reset_expires: expires }).eq("id", authData.user.id);
+      await supabase
+        .from("profiles")
+        .update({ reset_code: otpCode, reset_expires: expires })
+        .eq("id", authData.user.id);
 
-        const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-general-icon.png`;
+      const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-general-icon.png`;
 
       const emailHtml = `
-      <div style="font-family: sans-serif; color: #1e293b; max-width: 500px; margin: auto; border: 1px solid #e2e8f0; border-radius: 16px;">
+        <div style="font-family: sans-serif; color: #1e293b; max-width: 500px; margin: auto; border: 1px solid #e2e8f0; border-radius: 16px;">
           <div style="background-color: #0f172a; padding: 20px; text-align: center;">
-              <img src="${logoSrc}" style="width: 40px; margin-bottom: 10px;">
-              <h2 style="color: #ffffff; margin: 0;">SÉCURITÉ SANTÉ PLUS</h2>
+            <img src="${logoSrc}" style="width: 40px; margin-bottom: 10px;">
+            <h2 style="color: #ffffff; margin: 0;">SÉCURITÉ SANTÉ PLUS</h2>
           </div>
           <div style="padding: 30px; text-align: center;">
-              <h2>Code de vérification</h2>
-              <p>Bonjour <b>${profile.nom}</b>, voici votre code sécurisé :</p>
-              <div style="background: #f1f5f9; padding: 20px; margin: 25px 0; font-size: 32px; font-weight: 900; letter-spacing: 10px; color: #16a34a; border-radius: 12px;">
-                  ${otpCode}
-              </div>
+            <h2>Code de vérification</h2>
+            <p>Bonjour <b>${profile.nom}</b>, voici votre code sécurisé :</p>
+            <div style="background: #f1f5f9; padding: 20px; margin: 25px 0; font-size: 32px; font-weight: 900; letter-spacing: 10px; color: #16a34a; border-radius: 12px;">
+              ${otpCode}
+            </div>
           </div>
-      </div>`;  
-
+        </div>
+      `;
 
       await sendEmailAPI(email, "Code de sécurité Santé Plus", emailHtml);
       
       return res.json({ status: "require_2fa", email: email });
     }
 
-    // E. Connexion directe pour les autres rôles
-    const token = jwt.sign({ userId: authData.user.id, role: userRole }, JWT_SECRET, { expiresIn: "24h" });
+    // E. Connexion directe
+    const token = jwt.sign(
+      { userId: authData.user.id, role: userRole }, 
+      JWT_SECRET, 
+      { expiresIn: "24h" }
+    );
+    
     return res.json({ 
-        status: "success", 
-        token, 
-        role: userRole, 
-        nom: profile.nom,
-        photo_url: profile.photo_url || null,  
-        user_id: authData.user.id,
-        type_compte: profile.type_compte || 'AVEC_PATIENT' 
-
+      status: "success", 
+      token, 
+      role: userRole, 
+      nom: profile.nom,
+      photo_url: profile.photo_url || null,  
+      user_id: authData.user.id,
+      type_compte: profile.type_compte || 'AVEC_PATIENT' 
     });
+
   } catch (err) {
-    console.error("Login Crash:", err.message);
+    console.error("❌ Login Crash:", err.message);
     res.status(500).json({ error: "Erreur technique serveur" });
   }
 });
 
-
-// Demander la réinitialisation du mot de passe
-// Mot de passe oublié - Demander réinitialisation
+// ============================================================
+// 2. MOT DE PASSE OUBLIÉ - DEMANDER RÉINITIALISATION
+// ============================================================
 router.post("/forgot-password", async (req, res) => {
   const { email } = req.body;
   console.log("📧 Demande reset pour:", email);
@@ -121,12 +144,10 @@ router.post("/forgot-password", async (req, res) => {
     }
 
     // Générer un token unique
-    const crypto = require("crypto");
     const resetToken = crypto.randomBytes(32).toString('hex');
     const expires = new Date(Date.now() + 3600000).toISOString(); // 1 heure
 
     console.log("🔑 Token généré:", resetToken.substring(0, 20) + "...");
-    console.log("⏰ Expiration:", expires);
 
     // Stocker le token
     await supabase
@@ -158,19 +179,24 @@ router.post("/forgot-password", async (req, res) => {
     res.json({ success: true, message: "Email envoyé !" });
 
   } catch (err) {
-    console.error("❌ Erreur:", err);
+    console.error("❌ Erreur forgot-password:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-
-// Réinitialiser le mot de passe
+// ============================================================
+// 3. RÉINITIALISER LE MOT DE PASSE (AVEC TOKEN)
+// ============================================================
 router.post("/reset-password", async (req, res) => {
   const { token, newPassword } = req.body;
   console.log("🔵 Token reçu:", token?.substring(0, 20) + "...");
 
   if (!token || !newPassword) {
     return res.status(400).json({ error: "Token et mot de passe requis" });
+  }
+
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: "Le mot de passe doit contenir au moins 6 caractères" });
   }
 
   try {
@@ -195,9 +221,6 @@ router.post("/reset-password", async (req, res) => {
 
     if (updateError) throw updateError;
 
-
-
-    
     // Supprimer le token
     await supabase
       .from("profiles")
@@ -207,13 +230,13 @@ router.post("/reset-password", async (req, res) => {
     res.json({ success: true, message: "Mot de passe mis à jour" });
 
   } catch (err) {
-    console.error("❌ Erreur:", err);
+    console.error("❌ Erreur reset-password:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ============================================================
-// 2. VÉRIFICATION DU CODE 2FA
+// 4. VÉRIFICATION DU CODE 2FA
 // ============================================================
 router.post("/verify-2fa", async (req, res) => {
   try {
@@ -221,12 +244,14 @@ router.post("/verify-2fa", async (req, res) => {
     const codeSaisi = String(req.body.code || "").trim();
 
     const { data: profile } = await supabase
-        .from("profiles")
-        .select("id, reset_code, reset_expires, role, nom")
-        .eq("email", email) 
-        .single();
+      .from("profiles")
+      .select("id, reset_code, reset_expires, role, nom")
+      .eq("email", email) 
+      .single();
 
-    if (!profile) return res.status(401).json({ status: "error", message: "Session expirée." });
+    if (!profile) {
+      return res.status(401).json({ status: "error", message: "Session expirée." });
+    }
 
     const codeEnBase = profile.reset_code ? String(profile.reset_code).trim() : null;
     
@@ -241,466 +266,548 @@ router.post("/verify-2fa", async (req, res) => {
       return res.status(401).json({ status: "error", message: "Ce code a expiré." });
     }
 
-    await supabase.from("profiles").update({ reset_code: null, reset_expires: null }).eq("id", profile.id);
+    await supabase
+      .from("profiles")
+      .update({ reset_code: null, reset_expires: null })
+      .eq("id", profile.id);
 
-    const token = jwt.sign({ userId: profile.id, role: profile.role }, JWT_SECRET, { expiresIn: "24h" });
+    const token = jwt.sign(
+      { userId: profile.id, role: profile.role }, 
+      JWT_SECRET, 
+      { expiresIn: "24h" }
+    );
 
-      return res.json({ 
-          status: "success", 
-          token, 
-          role: profile.role, 
-          nom: profile.nom,
-          photo_url: profile.photo_url || null,  
-          user_id: profile.id                     
-      });
+    return res.json({ 
+      status: "success", 
+      token, 
+      role: profile.role, 
+      nom: profile.nom,
+      photo_url: profile.photo_url || null,  
+      user_id: profile.id                     
+    });
   } catch (err) {
+    console.error("❌ Erreur verify-2fa:", err);
     res.status(500).json({ status: "error", message: "Erreur technique serveur." });
   }
 });
 
 // ============================================================
-// 3. MOT DE PASSE OUBLIÉ (Demander un code)
+// 5. MOT DE PASSE OUBLIÉ - DEMANDER UN CODE (ANCIENNE MÉTHODE)
 // ============================================================
 router.all("/request-password-reset", async (req, res) => {
-    const email = req.body.email ? req.body.email.toLowerCase().trim() : "";
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const expires = new Date(Date.now() + 15 * 60000).toISOString(); // Expire dans 15 min
-  
-    // On met à jour le code dans la table "profiles"
-    const { data: profile, error } = await supabase
-      .from("profiles")
-      .update({ reset_code: code, reset_expires: expires })
-      .eq("email", email)
-      .select("nom")
-      .maybeSingle();
-  
-if (profile) {
-  const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-general-icon.png`;
-  
-  const html = `
-    <div style="font-family: sans-serif; color: #1e293b; max-width: 500px; margin: auto; border: 1px solid #e2e8f0; border-radius: 16px;">
+  const email = req.body.email ? req.body.email.toLowerCase().trim() : "";
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const expires = new Date(Date.now() + 15 * 60000).toISOString();
+
+  const { data: profile, error } = await supabase
+    .from("profiles")
+    .update({ reset_code: code, reset_expires: expires })
+    .eq("email", email)
+    .select("nom")
+    .maybeSingle();
+
+  if (profile) {
+    const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-general-icon.png`;
+    
+    const html = `
+      <div style="font-family: sans-serif; color: #1e293b; max-width: 500px; margin: auto; border: 1px solid #e2e8f0; border-radius: 16px;">
         <div style="background-color: #0f172a; padding: 20px; text-align: center;">
-            <img src="${logoSrc}" style="width: 40px; margin-bottom: 10px;">
-            <h2 style="color: #ffffff; margin: 0; font-size: 16px;">SANTÉ PLUS SERVICES</h2>
+          <img src="${logoSrc}" style="width: 40px; margin-bottom: 10px;">
+          <h2 style="color: #ffffff; margin: 0; font-size: 16px;">SANTÉ PLUS SERVICES</h2>
         </div>
         <div style="padding: 30px; text-align: center;">
-            <h2 style="color: #1e293b;">Réinitialisation</h2>
-            <p>Bonjour <b>${profile.nom}</b>,</p>
-            <p>Voici votre code de vérification pour changer votre mot de passe :</p>
-            <div style="background: #f1f5f9; padding: 15px; margin: 20px 0; font-size: 28px; font-weight: 900; letter-spacing: 8px; color: #2563eb; text-align: center; border-radius: 10px;">
-                ${code}
-            </div>
-            <p style="font-size: 12px; color: #64748b;">Ce code expirera dans 15 minutes.</p>
+          <h2 style="color: #1e293b;">Réinitialisation</h2>
+          <p>Bonjour <b>${profile.nom}</b>,</p>
+          <p>Voici votre code de vérification pour changer votre mot de passe :</p>
+          <div style="background: #f1f5f9; padding: 15px; margin: 20px 0; font-size: 28px; font-weight: 900; letter-spacing: 8px; color: #2563eb; text-align: center; border-radius: 10px;">
+            ${code}
+          </div>
+          <p style="font-size: 12px; color: #64748b;">Ce code expirera dans 15 minutes.</p>
         </div>
-    </div>`;
+      </div>
+    `;
 
-  await sendEmailAPI(email, "Réinitialisation - Santé Plus", html);
-}
-  
-    // On répond succès même si l'email n'existe pas (Sécurité anti-scan)
-    return res.json({ status: "success", message: "Procédure lancée." });
+    await sendEmailAPI(email, "Réinitialisation - Santé Plus", html);
+  }
+
+  return res.json({ status: "success", message: "Procédure lancée." });
 });
 
 // ============================================================
-// 4. MOT DE PASSE OUBLIÉ (Changer le mot de passe)
+// 6. MOT DE PASSE OUBLIÉ - CHANGER AVEC CODE
 // ============================================================
-router.all("/reset-password", async (req, res) => {
-    const { email, code, newPassword } = req.body;
-    const cleanEmail = (email || "").toLowerCase().trim();
-  
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("email", cleanEmail)
-      .eq("reset_code", code)
-      .gt("reset_expires", new Date().toISOString())
-      .maybeSingle();
-  
-    if (!profile) return res.status(400).json({ error: "Code invalide ou expiré." });
-  
-    // Modification du mot de passe dans Supabase Auth (Nécessite Service Role Key)
-    const { error: updateAuthErr } = await supabase.auth.admin.updateUserById(
-        profile.id, 
-        { password: newPassword }
-    );
+router.all("/reset-password-with-code", async (req, res) => {
+  const { email, code, newPassword } = req.body;
+  const cleanEmail = (email || "").toLowerCase().trim();
 
-    if (updateAuthErr) return res.status(500).json({ error: "Erreur lors du changement de mot de passe." });
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("email", cleanEmail)
+    .eq("reset_code", code)
+    .gt("reset_expires", new Date().toISOString())
+    .maybeSingle();
 
-    // Nettoyage du code
-    await supabase.from("profiles").update({ reset_code: null, reset_expires: null }).eq("id", profile.id);
-  
-    return res.json({ status: "success" });
+  if (!profile) {
+    return res.status(400).json({ error: "Code invalide ou expiré." });
+  }
+
+  const { error: updateAuthErr } = await supabase.auth.admin.updateUserById(
+    profile.id, 
+    { password: newPassword }
+  );
+
+  if (updateAuthErr) {
+    return res.status(500).json({ error: "Erreur lors du changement de mot de passe." });
+  }
+
+  await supabase
+    .from("profiles")
+    .update({ reset_code: null, reset_expires: null })
+    .eq("id", profile.id);
+
+  return res.json({ status: "success" });
 });
 
 // ============================================================
-// 5. INSCRIPTION DUO : FAMILLE + PATIENT (Public)
-// ============================================================
-// ============================================================
-// 5. INSCRIPTION : FAMILLE AVEC ou SANS PATIENT (VERSION COMPLÈTE)
+// 7. INSCRIPTION : FAMILLE AVEC ou SANS PATIENT
 // ============================================================
 router.post("/register-family-patient", async (req, res) => {
-    const { 
-        email, password, nom_famille, prenom_famille, tel_famille, lien_parente, ville_payeur,
-        nom_patient, prenom_patient, age_patient, sexe_patient, adresse_patient, tel_patient,
-        contact_urgence, contact_urgence_tel, pathologies, traitements, allergies, notes_medicales, formule,
-        // NOUVEAU : type de compte
-        type_compte  // 'AVEC_PATIENT' ou 'SANS_PATIENT'
-    } = req.body;
+  const { 
+    email, password, nom_famille, prenom_famille, tel_famille, lien_parente, ville_payeur,
+    nom_patient, prenom_patient, age_patient, sexe_patient, adresse_patient, tel_patient,
+    contact_urgence, contact_urgence_tel, pathologies, traitements, allergies, notes_medicales, formule,
+    type_compte  // 'AVEC_PATIENT' ou 'SANS_PATIENT'
+  } = req.body;
+
+  const cleanEmail = (email || "").toLowerCase().trim();
+  const nomCompletFamille = `${prenom_famille || ''} ${nom_famille}`.trim();
+  const hasPatient = type_compte === 'AVEC_PATIENT';
+
+  // Vérifier les champs obligatoires
+  if (!email || !password || !nom_famille) {
+    return res.status(400).json({ error: "Email, nom et mot de passe requis" });
+  }
+
+  if (password.length < 6) {
+    return res.status(400).json({ error: "Le mot de passe doit contenir au moins 6 caractères" });
+  }
+
+  if (hasPatient && (!nom_patient || !adresse_patient)) {
+    return res.status(400).json({ 
+      error: "Pour un compte avec patient, le nom et l'adresse du patient sont requis" 
+    });
+  }
+
+  // Traitement des pathologies
+  let pathologiesArray = [];
+  if (hasPatient && pathologies) {
+    if (Array.isArray(pathologies)) {
+      pathologiesArray = pathologies;
+    } else if (typeof pathologies === 'string') {
+      pathologiesArray = pathologies.split(',').map(s => s.trim());
+    }
+  }
+
+  try {
+    console.log(`📝 1. Création du compte Auth pour: ${cleanEmail} (${type_compte || 'AVEC_PATIENT'})`);
     
-    const cleanEmail = (email || "").toLowerCase().trim();
-    const nomCompletFamille = `${prenom_famille || ''} ${nom_famille}`.trim();
-    const hasPatient = type_compte === 'AVEC_PATIENT';
+    const { data: auth, error: authErr } = await supabase.auth.signUp({ 
+      email: cleanEmail, 
+      password: password 
+    });
     
-    // Vérifier les champs obligatoires selon le type
-    if (!email || !password || !nom_famille) {
-        return res.status(400).json({ error: "Email, nom et mot de passe requis" });
+    if (authErr) {
+      console.error("❌ Erreur Auth:", authErr);
+      throw authErr;
+    }
+    console.log("✅ Auth créé:", auth.user.id);
+
+    // 2. Insertion dans profiles
+    console.log("📝 2. Insertion dans profiles...");
+    const { error: profileErr } = await supabase.from("profiles").insert({
+      id: auth.user.id, 
+      nom: nomCompletFamille,
+      prenom: prenom_famille,
+      telephone: tel_famille,
+      email: cleanEmail,
+      adresse: ville_payeur,
+      role: 'FAMILLE', 
+      statut_validation: 'EN_ATTENTE',
+      type_compte: type_compte || 'AVEC_PATIENT'
+    });
+
+    if (profileErr) {
+      console.error("❌ Erreur profile:", profileErr);
+      throw profileErr;
+    }
+    console.log("✅ Profile famille créé");
+
+    // 3. Insertion dans patients (seulement si AVEC_PATIENT)
+    let patientResult = null;
+    if (hasPatient) {
+      console.log("📝 3. Insertion dans patients...");
+      
+      const nomCompletPatient = `${prenom_patient || ''} ${nom_patient}`.trim();
+      
+      const patientData = {
+        nom_complet: nomCompletPatient,
+        prenom: prenom_patient,
+        nom: nom_patient,
+        age: age_patient ? parseInt(age_patient) : null,
+        sexe: sexe_patient,
+        adresse: adresse_patient,
+        telephone: tel_patient,
+        contact_urgence: contact_urgence,
+        contact_urgence_tel: contact_urgence_tel,
+        pathologies: pathologiesArray,
+        traitements: traitements || null,
+        allergies: allergies || null,
+        notes_medicales: notes_medicales || null,
+        formule: formule || null,
+        famille_user_id: auth.user.id,
+        statut_paiement: 'A jour',
+        statut_validation: 'EN_ATTENTE',
+        categorie_service: req.body.categorie || 'SENIOR',
+        a_ete_ajoute_apres: false
+      };
+      
+      console.log("📦 Données patient:", JSON.stringify(patientData, null, 2));
+      
+      const { error: patientErr, data: patientInserted } = await supabase
+        .from("patients")
+        .insert(patientData)
+        .select();
+        
+      if (patientErr) {
+        console.error("❌ Erreur patient:", patientErr);
+        throw patientErr;
+      }
+      patientResult = patientInserted;
+      console.log("✅ Patient créé:", patientResult);
+    } else {
+      console.log("📝 3. Pas de patient (compte SANS_PATIENT)");
+    }
+
+    // 4. Email de confirmation
+    const isMaman = formule === 'MATERNITE' || (req.body.categorie === 'MAMAN_BEBE');
+    const logoSrc = isMaman 
+      ? `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-maman-text.png`
+      : `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-general-text.png`;
+    
+    let emailHtml;
+    if (hasPatient) {
+      emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto;">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <img src="${logoSrc}" style="width: 100px; height: auto;">
+          </div>
+          <h2 style="color: #10B981;">Bienvenue chez Santé Plus !</h2>
+          <p>Bonjour ${nomCompletFamille},</p>
+          <p>Nous avons bien reçu votre demande d'admission pour le suivi de <strong>${nom_patient || ''} ${prenom_patient || ''}</strong>.</p>
+          <p>Un coordinateur va valider votre dossier sous 24h.</p>
+          <hr>
+          <p style="font-size: 12px; color: #64748B;">Santé Plus Services - Bénin</p>
+        </div>
+      `;
+    } else {
+      emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto;">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <img src="${logoSrc}" style="width: 100px; height: auto;">
+          </div>
+          <h2 style="color: #10B981;">Bienvenue chez Santé Plus !</h2>
+          <p>Bonjour ${nomCompletFamille},</p>
+          <p>Nous avons bien reçu votre demande de création de compte <strong>sans patient</strong>.</p>
+          <p>Un coordinateur va valider votre compte sous 24h.</p>
+          <p>Une fois votre compte activé, vous pourrez :</p>
+          <ul>
+            <li>✅ Passer des commandes de produits</li>
+            <li>✅ Souscrire au Pack Confort 24/7</li>
+            <li>✅ Ajouter un patient plus tard si nécessaire</li>
+          </ul>
+          <hr>
+          <p style="font-size: 12px; color: #64748B;">Santé Plus Services - Bénin</p>
+        </div>
+      `;
     }
     
-    if (hasPatient && (!nom_patient || !adresse_patient)) {
-        return res.status(400).json({ error: "Pour un compte avec patient, le nom et l'adresse du patient sont requis" });
-    }
+    await sendEmailAPI(cleanEmail, "Votre demande d'inscription - Santé Plus", emailHtml);
 
-    // ✅ Traitement des pathologies (si patient présent)
-    let pathologiesArray = [];
-    if (hasPatient && pathologies) {
-        if (Array.isArray(pathologies)) {
-            pathologiesArray = pathologies;
-        } else if (typeof pathologies === 'string') {
-            pathologiesArray = pathologies.split(',').map(s => s.trim());
-        }
-    }
-
-    try {
-        console.log(`📝 1. Création du compte Auth pour: ${cleanEmail} (${type_compte || 'AVEC_PATIENT'})`);
-        const { data: auth, error: authErr } = await supabase.auth.signUp({ 
-            email: cleanEmail, 
-            password: password 
-        });
-        if (authErr) throw authErr;
-        console.log("✅ Auth créé:", auth.user.id);
-
-        // 2. Insertion dans profiles
-        console.log("📝 2. Insertion dans profiles...");
-        const { error: profileErr } = await supabase.from("profiles").insert({
-            id: auth.user.id, 
-            nom: nomCompletFamille,
-            prenom: prenom_famille,
-            telephone: tel_famille,
-            email: cleanEmail,
-            adresse: ville_payeur,
-            role: 'FAMILLE', 
-            statut_validation: 'EN_ATTENTE',
-            type_compte: type_compte || 'AVEC_PATIENT'  // ← NOUVEAU
-        });
-        if (profileErr) {
-            console.error("❌ Erreur profile:", profileErr);
-            throw profileErr;
-        }
-        console.log("✅ Profile famille créé");
-
-        // 3. Insertion dans patients (seulement si AVEC_PATIENT)
-        let patientResult = null;
-        if (hasPatient) {
-            console.log("📝 3. Insertion dans patients...");
-            
-            const nomCompletPatient = `${prenom_patient || ''} ${nom_patient}`.trim();
-            
-            const patientData = {
-                nom_complet: nomCompletPatient,
-                prenom: prenom_patient,
-                nom: nom_patient,
-                age: age_patient,
-                sexe: sexe_patient,
-                adresse: adresse_patient,
-                telephone: tel_patient,
-                contact_urgence: contact_urgence,
-                contact_urgence_tel: contact_urgence_tel,
-                pathologies: pathologiesArray,
-                traitements: traitements || null,
-                allergies: allergies || null,
-                notes_medicales: notes_medicales || null,
-                formule: formule || null,
-                famille_user_id: auth.user.id,
-                statut_paiement: 'A jour',
-                statut_validation: 'EN_ATTENTE',
-                categorie_service: req.body.categorie || 'SENIOR',
-                a_ete_ajoute_apres: false  // ← NOUVEAU : ajouté directement
-            };
-            
-            console.log("📦 Données patient:", JSON.stringify(patientData, null, 2));
-            
-            const { error: patientErr, data: patientInserted } = await supabase
-                .from("patients")
-                .insert(patientData)
-                .select();
-                
-            if (patientErr) {
-                console.error("❌ Erreur patient:", patientErr);
-                throw patientErr;
-            }
-            patientResult = patientInserted;
-            console.log("✅ Patient créé:", patientResult);
-        } else {
-            console.log("📝 3. Pas de patient (compte SANS_PATIENT)");
-        }
-
-        // 4. Email de confirmation (adapté selon le type)
-        const isMaman = formule === 'MATERNITE' || (req.body.categorie === 'MAMAN_BEBE');
-        const logoSrc = isMaman 
-            ? `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-maman-text.png`
-            : `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-general-text.png`;
-        
-        let emailHtml;
-        if (hasPatient) {
-            emailHtml = `
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto;">
-                    <div style="text-align: center; margin-bottom: 20px;">
-                        <img src="${logoSrc}" style="width: 100px; height: auto;">
-                    </div>
-                    <h2 style="color: #10B981;">Bienvenue chez Santé Plus !</h2>
-                    <p>Bonjour ${nomCompletFamille},</p>
-                    <p>Nous avons bien reçu votre demande d'admission pour le suivi de <strong>${nom_patient || ''} ${prenom_patient || ''}</strong>.</p>
-                    <p>Un coordinateur va valider votre dossier sous 24h.</p>
-                    <hr>
-                    <p style="font-size: 12px; color: #64748B;">Santé Plus Services - Bénin</p>
-                </div>
-            `;
-        } else {
-            emailHtml = `
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto;">
-                    <div style="text-align: center; margin-bottom: 20px;">
-                        <img src="${logoSrc}" style="width: 100px; height: auto;">
-                    </div>
-                    <h2 style="color: #10B981;">Bienvenue chez Santé Plus !</h2>
-                    <p>Bonjour ${nomCompletFamille},</p>
-                    <p>Nous avons bien reçu votre demande de création de compte <strong>sans patient</strong>.</p>
-                    <p>Un coordinateur va valider votre compte sous 24h.</p>
-                    <p>Une fois votre compte activé, vous pourrez :</p>
-                    <ul>
-                        <li>✅ Passer des commandes de produits</li>
-                        <li>✅ Souscrire au Pack Confort 24/7</li>
-                        <li>✅ Ajouter un patient plus tard si nécessaire</li>
-                    </ul>
-                    <hr>
-                    <p style="font-size: 12px; color: #64748B;">Santé Plus Services - Bénin</p>
-                </div>
-            `;
-        }
-        
-        await sendEmailAPI(cleanEmail, "Votre demande d'inscription - Santé Plus", emailHtml);
-
-        res.json({ 
-            status: "success", 
-            message: hasPatient 
-                ? "Inscription avec patient enregistrée" 
-                : "Inscription sans patient enregistrée",
-            type_compte: type_compte || 'AVEC_PATIENT'
-        });
-        
-    } catch (err) { 
-        console.error("❌ Erreur Inscription:", err);
-        res.status(500).json({ error: err.message, details: err.details }); 
-    }
+    res.json({ 
+      status: "success", 
+      message: hasPatient 
+        ? "Inscription avec patient enregistrée" 
+        : "Inscription sans patient enregistrée",
+      type_compte: type_compte || 'AVEC_PATIENT'
+    });
+    
+  } catch (err) { 
+    console.error("❌ Erreur Inscription:", err);
+    res.status(500).json({ error: err.message, details: err.details }); 
+  }
 });
+
 // ============================================================
-// 6. CRÉATION D'EMPLOYÉ PAR LE COORDINATEUR (Avec envoi d'email)
+// 8. CRÉATION D'EMPLOYÉ PAR LE COORDINATEUR
 // ============================================================
 router.post("/create-member", middleware(["COORDINATEUR"]), async (req, res) => {
-    // Récupérer tous les champs
-    const { 
-        email, 
-        password, 
-        nom, 
-        prenom, 
-        telephone, 
-        adresse, 
-        competences, 
-        disponibilites, 
-        role 
-    } = req.body;
+  const { 
+    email, 
+    password, 
+    nom, 
+    prenom, 
+    telephone, 
+    adresse, 
+    competences, 
+    disponibilites, 
+    role 
+  } = req.body;
 
-    try {
-        console.log(`[RH] Création du collaborateur : ${email}`);
+  // Vérifications de base
+  if (!email || !password || !nom) {
+    return res.status(400).json({ 
+      error: "Email, mot de passe et nom sont requis" 
+    });
+  }
 
-        // 1. Création dans Supabase Auth
-        const { data: userData, error: authErr } = await supabase.auth.admin.createUser({
-            email: email,
-            password: password,
-            email_confirm: true
-        });
-        if (authErr) throw authErr;
+  if (password.length < 6) {
+    return res.status(400).json({ 
+      error: "Le mot de passe doit contenir au moins 6 caractères" 
+    });
+  }
 
-        // 2. Ajout dans la table Profiles avec TOUS les champs
-        const { error: profErr } = await supabase.from("profiles").insert([{
-            id: userData.user.id,
-            nom: nom,
-            prenom: prenom || null,
-            telephone: telephone || null,
-            email: email,
-            adresse: adresse || null,
-            competences: competences || [],
-            disponibilites: disponibilites || null,
-            role: role,
-            statut_validation: 'ACTIF'
-        }]);
-        if (profErr) throw profErr;
+  try {
+    console.log(`[RH] Création du collaborateur : ${email}`);
 
-        // 3. ENVOI DE L'EMAIL
-        const nomComplet = `${prenom || ''} ${nom}`.trim();
-     const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-general-text.png`;
+    // 1. Création dans Supabase Auth
+    const { data: userData, error: authErr } = await supabase.auth.admin.createUser({
+      email: email,
+      password: password,
+      email_confirm: true
+    });
+    
+    if (authErr) throw authErr;
 
-const emailHtml = `
-    <div style="background-color: #F8FAFC; padding: 40px; font-family: sans-serif;">
+    // 2. Ajout dans la table Profiles
+    const { error: profErr } = await supabase.from("profiles").insert([{
+      id: userData.user.id,
+      nom: nom,
+      prenom: prenom || null,
+      telephone: telephone || null,
+      email: email,
+      adresse: adresse || null,
+      competences: competences || [],
+      disponibilites: disponibilites || null,
+      role: role || 'AIDANT',
+      statut_validation: 'ACTIF'
+    }]);
+    
+    if (profErr) throw profErr;
+
+    // 3. ENVOI DE L'EMAIL
+    const nomComplet = `${prenom || ''} ${nom}`.trim();
+    const logoSrc = `${process.env.API_URL || 'https://sante-plus-backend-main.onrender.com'}/assets/images/logo-general-text.png`;
+
+    const emailHtml = `
+      <div style="background-color: #F8FAFC; padding: 40px; font-family: sans-serif;">
         <div style="max-width: 600px; margin: auto; background: white; border-radius: 24px; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.05);">
-            <div style="background: #0F172A; padding: 30px; text-align: center;">
-                <img src="${logoSrc}" style="width: 60px; margin-bottom: 10px;">
-                <h1 style="color: white; margin: 0; font-size: 18px; letter-spacing: 2px;">SANTÉ PLUS SERVICES</h1>
+          <div style="background: #0F172A; padding: 30px; text-align: center;">
+            <img src="${logoSrc}" style="width: 60px; margin-bottom: 10px;">
+            <h1 style="color: white; margin: 0; font-size: 18px; letter-spacing: 2px;">SANTÉ PLUS SERVICES</h1>
+          </div>
+          <div style="padding: 40px;">
+            <h2 style="color: #0F172A; font-size: 22px;">Bienvenue dans l'équipe !</h2>
+            <p style="color: #64748B;">Bonjour <b>${nomComplet}</b>, votre compte ${role || 'AIDANT'} a été créé avec succès.</p>
+            
+            <div style="background: #F1F5F9; border-left: 4px solid #10B981; padding: 20px; border-radius: 12px; margin: 25px 0;">
+              <p style="margin: 0; color: #64748B; font-size: 11px; text-transform: uppercase; font-weight: bold;">Vos identifiants de connexion</p>
+              <p style="margin: 10px 0 5px 0; font-size: 15px;">Email : <b>${email}</b></p>
+              <p style="margin: 0; font-size: 15px;">Mot de passe : <b style="color: #10B981;">${password}</b></p>
             </div>
-            <div style="padding: 40px;">
-                <h2 style="color: #0F172A; font-size: 22px;">Bienvenue dans l'équipe !</h2>
-                <p style="color: #64748B;">Bonjour <b>${nomComplet}</b>, votre compte ${role} a été créé avec succès.</p>
-                
-                <div style="background: #F1F5F9; border-left: 4px solid #10B981; padding: 20px; border-radius: 12px; margin: 25px 0;">
-                    <p style="margin: 0; color: #64748B; font-size: 11px; text-transform: uppercase; font-weight: bold;">Vos identifiants de connexion</p>
-                    <p style="margin: 10px 0 5px 0; font-size: 15px;">Email : <b>${email}</b></p>
-                    <p style="margin: 0; font-size: 15px;">Mot de passe : <b style="color: #10B981;">${password}</b></p>
-                </div>
-                
-                ${adresse ? `<p style="font-size: 12px; color: #64748B;">📍 Adresse: ${adresse}</p>` : ''}
-                ${competences?.length ? `<p style="font-size: 12px; color: #64748B;">🩺 Compétences: ${competences.join(', ')}</p>` : ''}
-                
-                <a href="https://app.mysanteplus.com//" style="display: block; background: #0F172A; color: white; padding: 15px; text-align: center; text-decoration: none; border-radius: 12px; font-weight: bold;">Accéder à mon espace</a>
-            </div>
+            
+            ${adresse ? `<p style="font-size: 12px; color: #64748B;">📍 Adresse: ${adresse}</p>` : ''}
+            ${competences?.length ? `<p style="font-size: 12px; color: #64748B;">🩺 Compétences: ${competences.join(', ')}</p>` : ''}
+            
+            <a href="https://app.mysanteplus.com/" style="display: block; background: #0F172A; color: white; padding: 15px; text-align: center; text-decoration: none; border-radius: 12px; font-weight: bold;">Accéder à mon espace</a>
+          </div>
         </div>
-    </div>
-`;
-        try {
-            await sendEmailAPI(email, "Vos accès collaborateurs - Santé Plus", emailHtml);
-            console.log("✅ Mail RH envoyé avec succès !");
-        } catch (mailError) {
-            console.warn("⚠️ Le compte est créé mais l'email n'a pas pu être envoyé.");
-        }
-
-        res.json({ status: "success" });
-    } catch (err) { 
-        console.error("❌ Erreur Create Member:", err.message);
-        res.status(500).json({ error: err.message }); 
+      </div>
+    `;
+    
+    try {
+      await sendEmailAPI(email, "Vos accès collaborateurs - Santé Plus", emailHtml);
+      console.log("✅ Mail RH envoyé avec succès !");
+    } catch (mailError) {
+      console.warn("⚠️ Le compte est créé mais l'email n'a pas pu être envoyé.");
     }
+
+    res.json({ status: "success" });
+  } catch (err) { 
+    console.error("❌ Erreur Create Member:", err.message);
+    res.status(500).json({ error: err.message }); 
+  }
 });
 
 // ============================================================
-// 7. ENREGISTRER UN APPAREIL POUR LES NOTIFICATIONS PUSH
+// 9. ENREGISTRER UN APPAREIL POUR LES NOTIFICATIONS PUSH
 // ============================================================
 router.post("/subscribe-push", middleware(), async (req, res) => {
   const { endpoint, p256dh, auth } = req.body;
-  if (!endpoint) return res.status(400).json({ error: "Endpoint manquant" });
+  
+  if (!endpoint) {
+    return res.status(400).json({ error: "Endpoint manquant" });
+  }
 
   try {
     await supabase.from("push_subscriptions").upsert({
-        user_id: req.user.userId, endpoint, p256dh, auth
+      user_id: req.user.userId, 
+      endpoint, 
+      p256dh, 
+      auth
     }, { onConflict: "endpoint" });
 
     res.status(201).json({ status: "success" });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { 
+    console.error("❌ Erreur subscribe-push:", err);
+    res.status(500).json({ error: err.message }); 
+  }
 });
 
 // ============================================================
-// 8. LISTER LES PROFILS (Pour assignation Familles/Aidants)
+// 10. LISTER LES PROFILS (Pour assignation Familles/Aidants)
 // ============================================================
 router.get("/profiles", middleware(["COORDINATEUR"]), async (req, res) => {
-    const { role } = req.query;
-    let query = supabase.from("profiles").select("id, nom, email");
+  const { role } = req.query;
+  
+  try {
+    let query = supabase.from("profiles").select("id, nom, prenom, email, role, telephone");
     
     if (role) {
-        query = query.eq("role", role);
+      query = query.eq("role", role);
     }
     
-    const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+    const { data, error } = await query.order("nom", { ascending: true });
+    
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) {
+    console.error("❌ Erreur profiles:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-
-/**
- * 📸 Mettre à jour la photo de profil
- */
+// ============================================================
+// 11. METTRE À JOUR LA PHOTO DE PROFIL
+// ============================================================
 router.post("/update-photo", middleware(), upload.single('photo'), async (req, res) => {
-    try {
-        const file = req.file;
-        if (!file) return res.status(400).json({ error: "Aucune photo" });
-        
-        const fileName = `profiles/${req.user.userId}_${Date.now()}.jpg`;
-        await supabase.storage.from("photos").upload(fileName, file.buffer, {
-            contentType: 'image/jpeg',
-            upsert: true
-        });
-        
-        const { data: urlData } = supabase.storage.from("photos").getPublicUrl(fileName);
-        const photo_url = urlData.publicUrl;
-        
-        await supabase.from("profiles").update({ photo_url }).eq("id", req.user.userId);
-        
-        res.json({ photo_url });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+  try {
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ error: "Aucune photo" });
     }
+    
+    const fileName = `profiles/${req.user.userId}_${Date.now()}.jpg`;
+    
+    const { error: uploadError } = await supabase.storage
+      .from("photos")
+      .upload(fileName, file.buffer, {
+        contentType: 'image/jpeg',
+        upsert: true
+      });
+    
+    if (uploadError) throw uploadError;
+    
+    const { data: urlData } = supabase.storage.from("photos").getPublicUrl(fileName);
+    const photo_url = urlData.publicUrl;
+    
+    const { error: updateError } = await supabase
+      .from("profiles")
+      .update({ photo_url })
+      .eq("id", req.user.userId);
+    
+    if (updateError) throw updateError;
+    
+    res.json({ photo_url });
+  } catch (err) {
+    console.error("❌ Erreur update-photo:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-/**
- * 📋 Récupérer le profil utilisateur
- */
+// ============================================================
+// 12. RÉCUPÉRER LE PROFIL UTILISATEUR
+// ============================================================
 router.get("/profile/:userId", middleware(), async (req, res) => {
-    const { userId } = req.params;
-    
+  const { userId } = req.params;
+
+  try {
     const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", userId)
-        .single();
+      .from("profiles")
+      .select("*")
+      .eq("id", userId)
+      .single();
     
-    if (error) return res.status(404).json({ error: "Profil non trouvé" });
+    if (error) {
+      return res.status(404).json({ error: "Profil non trouvé" });
+    }
+    
     res.json(data);
+  } catch (err) {
+    console.error("❌ Erreur profile:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-/**
- * ✏️ Mettre à jour le profil
- */
+// ============================================================
+// 13. METTRE À JOUR LE PROFIL (BASE)
+// ============================================================
 router.put("/update-profile", middleware(), async (req, res) => {
-    const { nom, email, telephone } = req.body;
-    
+  const { nom, email, telephone } = req.body;
+  
+  try {
     const { error } = await supabase
-        .from("profiles")
-        .update({ nom, email, telephone })
-        .eq("id", req.user.userId);
+      .from("profiles")
+      .update({ nom, email, telephone })
+      .eq("id", req.user.userId);
     
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) throw error;
     res.json({ status: "success" });
+  } catch (err) {
+    console.error("❌ Erreur update-profile:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-/**
- * 👨‍⚕️ Mettre à jour les infos aidant
- */
+// ============================================================
+// 14. METTRE À JOUR LES INFOS AIDANT
+// ============================================================
 router.put("/update-aidant-info", middleware(["AIDANT"]), async (req, res) => {
-    const { competences, disponibilites } = req.body;
-    
+  const { competences, disponibilites } = req.body;
+  
+  try {
     const { error } = await supabase
-        .from("profiles")
-        .update({ competences, disponibilites })
-        .eq("id", req.user.userId);
+      .from("profiles")
+      .update({ competences, disponibilites })
+      .eq("id", req.user.userId);
     
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) throw error;
     res.json({ status: "success" });
+  } catch (err) {
+    console.error("❌ Erreur update-aidant-info:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-
-
-
+// ============================================================
+// 15. METTRE À JOUR LE PROFIL COMPLET
+// ============================================================
 router.put("/update-profile-full", middleware(), async (req, res) => {
-    const { prenom, nom, email, telephone, adresse } = req.body;
-    
-    console.log("📝 Mise à jour profil:", { prenom, nom, email, telephone, adresse });
-    
-    // ✅ Mise à jour simple - sans nom_complet
+  const { prenom, nom, email, telephone, adresse } = req.body;
+  
+  console.log("📝 Mise à jour profil:", { prenom, nom, email, telephone, adresse });
+  
+  try {
     const updateData = {};
     if (prenom !== undefined) updateData.prenom = prenom || null;
     if (nom !== undefined) updateData.nom = nom || null;
@@ -709,28 +816,41 @@ router.put("/update-profile-full", middleware(), async (req, res) => {
     if (adresse !== undefined) updateData.adresse = adresse || null;
     
     const { error } = await supabase
-        .from("profiles")
-        .update(updateData)
-        .eq("id", req.user.userId);
+      .from("profiles")
+      .update(updateData)
+      .eq("id", req.user.userId);
     
     if (error) {
-        console.error("❌ Erreur update-profile-full:", error);
-        return res.status(500).json({ error: error.message });
+      console.error("❌ Erreur update-profile-full:", error);
+      return res.status(500).json({ error: error.message });
     }
     
     console.log("✅ Profil mis à jour avec succès");
     res.json({ status: "success" });
+  } catch (err) {
+    console.error("❌ Erreur update-profile-full:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
+// ============================================================
+// 16. METTRE À JOUR LES INFOS AIDANT COMPLÈTES
+// ============================================================
 router.put("/update-aidant-full-info", middleware(["AIDANT"]), async (req, res) => {
-    const { competences, disponibilites, adresse } = req.body;
-    
+  const { competences, disponibilites, adresse } = req.body;
+  
+  try {
     const { error } = await supabase
-        .from("profiles")
-        .update({ competences, disponibilites, adresse })
-        .eq("id", req.user.userId);
+      .from("profiles")
+      .update({ competences, disponibilites, adresse })
+      .eq("id", req.user.userId);
     
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) throw error;
     res.json({ status: "success" });
+  } catch (err) {
+    console.error("❌ Erreur update-aidant-full-info:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
+
 module.exports = router;
