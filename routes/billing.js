@@ -68,57 +68,78 @@ function verifyWebhookSignature(signature, payload) {
 }
 
 // ============================================================
-// 🔔 WEBHOOK FEDAPAY (SANS AUTHENTIFICATION - PLACÉ EN PREMIER)
+// 🔔 WEBHOOK FEDAPAY 
 // ============================================================
 
 router.post("/webhook", express.raw({ type: 'application/json' }), async (req, res) => {
     console.log("💰 [WEBHOOK] Signal reçu");
     
+    // ✅ RÉCUPÉRER LE PAYLOAD BRUT
+    const rawBody = req.body.toString();
     let event;
     try {
-        event = JSON.parse(req.body.toString());
+        event = JSON.parse(rawBody);
     } catch (e) {
         event = req.body;
     }
     
     const signature = req.headers['x-fedapay-signature'];
     
-    if (!verifyWebhookSignature(signature, JSON.stringify(event))) {
+    // ✅ VÉRIFICATION DE SIGNATURE AMÉLIORÉE
+    if (!verifyWebhookSignature(signature, rawBody)) {
         console.error("❌ [WEBHOOK] Signature invalide");
+        console.error("📝 Signature reçue:", signature);
+        console.error("📝 Payload brut:", rawBody.substring(0, 200) + "...");
         return res.status(401).json({ error: "Signature invalide" });
     }
     
+    // ✅ TRAITER LE PAYMENT
     if (event.type === 'transaction.approved' || event.type === 'checkout.completed') {
-        const transaction = event.data || event.entity;
+        const transaction = event.data || event.entity || event.transaction;
         const transactionId = transaction.id;
         const amount = transaction.amount;
         const metadata = transaction.metadata || {};
         
         console.log(`✅ Paiement confirmé: ${transactionId} - ${amount} FCFA`);
+        console.log("📦 Métadonnées reçues:", metadata);
         
         try {
+            // ✅ RECHERCHER LA TRANSACTION EN ATTENTE
             const { data: pending, error: pendingErr } = await supabase
                 .from("pending_transactions")
                 .select("*")
                 .eq("transaction_id", transactionId)
                 .single();
             
-                const patientId = metadata.patient_id || pending?.patient_id || null;
-                const userId = metadata.user_id || pending?.user_id || null;
-                const durationMonths = metadata.duration_months || pending?.duration_months || 1;
-                const packName = metadata.pack_name || metadata.pack_type || pending?.pack_name || "Standard";
-                const isConfortPack = packName === "CONFORT_247";
-                
-                if (!patientId && !userId) {
-                    console.error("❌ Aucun patient_id ni user_id trouvé pour la transaction");
-                    return res.sendStatus(200);
-                }
+            if (pendingErr && pendingErr.code !== 'PGRST116') {
+                console.error("❌ Erreur recherche pending:", pendingErr);
+            }
+            
+            // ✅ EXTRAIRE LES IDs DES MÉTADONNÉES OU DE PENDING
+            const patientId = metadata.patient_id || pending?.patient_id || null;
+            const userId = metadata.user_id || pending?.user_id || null;
+            const durationMonths = parseInt(metadata.duration_months) || pending?.duration_months || 1;
+            const packName = metadata.pack_name || metadata.pack_type || pending?.pack_name || "Standard";
+            const isConfortPack = packName === "CONFORT_247";
+            
+            if (!patientId && !userId) {
+                console.error("❌ Aucun patient_id ni user_id trouvé pour la transaction");
+                console.error("📦 Métadonnées:", metadata);
+                console.error("📦 Pending:", pending);
+                return res.sendStatus(200);
+            }
             
             const paymentDate = new Date();
             const endDate = calculateSubscriptionEndDate(paymentDate, durationMonths, 5);
-            const monthYear = paymentDate.toLocaleDateString("fr-FR", { month: "2-digit", year: "numeric" });
+            const monthYear = paymentDate.toLocaleDateString("fr-FR", { 
+                month: "2-digit", 
+                year: "numeric" 
+            });
 
+            // ✅ CAS : PACK CONFORT (SANS_PATIENT)
             if (isConfortPack && userId) {
+                console.log(`💎 Activation Pack Confort pour ${userId}`);
+                
                 const { error: aboErr } = await supabase
                     .from("abonnements")
                     .insert([{
@@ -136,15 +157,23 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
                         mode_paiement: "FEDAPAY"
                     }]);
             
-                if (aboErr) throw aboErr;
+                if (aboErr) {
+                    console.error("❌ Erreur insertion abonnement Confort:", aboErr);
+                    throw aboErr;
+                }
             
-                await supabase
+                const { error: updateErr } = await supabase
                     .from("profiles")
                     .update({
                         pack_confort_actif: true,
                         date_fin_pack_confort: endDate.toISOString()
                     })
                     .eq("id", userId);
+            
+                if (updateErr) {
+                    console.error("❌ Erreur mise à jour profil Confort:", updateErr);
+                    throw updateErr;
+                }
             
                 if (pending?.id) {
                     await supabase
@@ -156,15 +185,22 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
                 await createNotification(
                     userId,
                     "💎 Pack Confort activé",
-                    `Votre Pack Confort 24/7 est maintenant actif.`,
+                    `Votre Pack Confort 24/7 est maintenant actif jusqu'au ${endDate.toLocaleDateString('fr-FR')}.`,
                     "payment",
                     "/#billing"
                 );
             
                 console.log(`✅ Pack Confort activé pour ${userId}`);
-            
                 return res.sendStatus(200);
             }
+            
+            // ✅ CAS : ABONNEMENT MÉDICAL (AVEC_PATIENT)
+            if (!patientId) {
+                console.error("❌ patient_id manquant pour l'abonnement médical");
+                return res.sendStatus(200);
+            }
+            
+            console.log(`💊 Activation abonnement médical pour patient ${patientId}`);
             
             const { error: aboErr } = await supabase
                 .from("abonnements")
@@ -182,9 +218,12 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
                     mode_paiement: "FEDAPAY"
                 }]);
             
-            if (aboErr) throw aboErr;
+            if (aboErr) {
+                console.error("❌ Erreur insertion abonnement médical:", aboErr);
+                throw aboErr;
+            }
             
-            await supabase
+            const { error: updateErr } = await supabase
                 .from("patients")
                 .update({
                     statut_paiement: "A jour",
@@ -194,6 +233,11 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
                 })
                 .eq("id", patientId);
             
+            if (updateErr) {
+                console.error("❌ Erreur mise à jour patient:", updateErr);
+                throw updateErr;
+            }
+            
             if (pending?.id) {
                 await supabase
                     .from("pending_transactions")
@@ -201,31 +245,79 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
                     .eq("id", pending.id);
             }
             
-            const { data: patient } = await supabase
+            // ✅ NOTIFIER LA FAMILLE
+            const { data: patient, error: patientErr } = await supabase
                 .from("patients")
                 .select("famille_user_id, nom_complet")
                 .eq("id", patientId)
                 .single();
             
-                if (patient?.famille_user_id) {
-                    await createNotification(
-                        patient.famille_user_id,
-                        "💎 Abonnement activé",
-                        `Paiement reçu pour ${patient.nom_complet}. Valable ${durationMonths} mois.`,
-                        "payment",
-                        "/#dashboard"
-                    );
-                }
+            if (!patientErr && patient?.famille_user_id) {
+                await createNotification(
+                    patient.famille_user_id,
+                    "💎 Abonnement activé",
+                    `Paiement reçu pour ${patient.nom_complet}. Valable ${durationMonths} mois.`,
+                    "payment",
+                    "/#dashboard"
+                );
+            }
             
-            console.log(`✅ Abonnement ${durationMonths} mois créé`);
+            console.log(`✅ Abonnement ${durationMonths} mois créé pour patient ${patientId}`);
             
         } catch (err) {
             console.error("❌ [WEBHOOK ERROR]:", err.message);
+            console.error("📚 Stack:", err.stack);
+            // ✅ NE PAS RENVOYER D'ERREUR À FEDAPAY (200 OK)
+            // Le webhook de FedaPay doit toujours recevoir 200 pour éviter les retries
         }
     }
     
     res.sendStatus(200);
 });
+
+// ✅ FONCTION DE VÉRIFICATION DE SIGNATURE CORRIGÉE
+function verifyWebhookSignature(signature, rawPayload) {
+    if (!signature || !process.env.FEDAPAY_WEBHOOK_SECRET) {
+        console.warn("⚠️ Signature ou secret webhook manquant");
+        return false;
+    }
+    
+    try {
+        // ✅ EXTRAIRE timestamp ET signature
+        const parts = signature.split(',');
+        let timestamp = null, signatureHash = null;
+        
+        for (const part of parts) {
+            if (part.startsWith('t=')) timestamp = part.substring(2);
+            else if (part.startsWith('s=')) signatureHash = part.substring(2);
+        }
+        
+        if (!timestamp || !signatureHash) {
+            console.warn("⚠️ Format de signature invalide:", signature);
+            return false;
+        }
+        
+        // ✅ RECONSTRUIRE LE PAYLOAD SIGNÉ
+        const signedPayload = timestamp + "." + rawPayload;
+        
+        // ✅ CALCULER LA SIGNATURE ATTENDUE
+        const expectedSignature = crypto
+            .createHmac('sha256', process.env.FEDAPAY_WEBHOOK_SECRET)
+            .update(signedPayload)
+            .digest('hex');
+        
+        // ✅ COMPARAISON SÉCURISÉE
+        return crypto.timingSafeEqual(
+            Buffer.from(signatureHash, 'hex'),
+            Buffer.from(expectedSignature, 'hex')
+        );
+        
+    } catch (err) {
+        console.error("❌ Erreur vérification signature:", err);
+        return false;
+    }
+}
+
 
 // ============================================================
 // 📊 1. LISTER LES ABONNEMENTS
@@ -1118,5 +1210,46 @@ router.get("/:id", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => 
     }
 });
 
+
+// billing.js - AJOUTER CETTE ROUTE POUR TESTER LE WEBHOOK
+
+router.get("/webhook/test", async (req, res) => {
+    const testPayload = {
+        type: 'transaction.approved',
+        data: {
+            id: 'test_' + Date.now(),
+            amount: 1000,
+            metadata: {
+                patient_id: 'test-patient-id',
+                user_id: 'test-user-id',
+                duration_months: 1,
+                pack_name: 'ESSENTIEL_SENIOR'
+            }
+        }
+    };
+    
+    // Simuler un appel webhook
+    const mockReq = {
+        body: JSON.stringify(testPayload),
+        headers: {
+            'x-fedapay-signature': 't=123456,s=' + crypto
+                .createHmac('sha256', process.env.FEDAPAY_WEBHOOK_SECRET || 'test-secret')
+                .update('123456.' + JSON.stringify(testPayload))
+                .digest('hex')
+        }
+    };
+    
+    const mockRes = {
+        status: (code) => ({ json: (data) => console.log(`Status ${code}:`, data) }),
+        sendStatus: (code) => console.log(`SendStatus ${code}`)
+    };
+    
+    await webhookHandler(mockReq, mockRes);
+    
+    res.json({ 
+        success: true, 
+        message: "Webhook test exécuté. Vérifiez les logs." 
+    });
+});
 
 module.exports = router;
