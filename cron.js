@@ -1,5 +1,4 @@
-// cron.js - VERSION PRODUCTION CORRIGÉE
-
+ 
 const cron = require("node-cron");
 const supabase = require("./supabaseClient");
 const { autoAssignPendingCommands } = require("./routes/commandes");
