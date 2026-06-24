@@ -339,9 +339,9 @@ router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, r
 });
 
 // ============================================================
-// 5. TRACKING GPS (AIDANT UNIQUEMENT)
+// 5. TRACKING GPS (AIDANT ET COORDINATEUR)
 // ============================================================
-router.post("/track", middleware(["AIDANT"]), async (req, res) => {
+router.post("/track", middleware(['AIDANT', 'COORDINATEUR']), async (req, res) => {
     const { visite_id, lat, lng, accuracy } = req.body;
     
     console.log(`📍 [TRACK] Visite ${visite_id}, Pos: ${lat}, ${lng}, Précision: ${accuracy}m`);
@@ -486,12 +486,25 @@ router.get("/live-tracking", middleware(['COORDINATEUR']), async (req, res) => {
 });
 
 // ============================================================
-// 7. POSITION ACTIVE POUR LA FAMILLE
+// 7. POSITION ACTIVE POUR LA FAMILLE (SUIVI DE L'AIDANT)
 // ============================================================
 router.get("/active/:patientId", middleware(["FAMILLE", "COORDINATEUR"]), async (req, res) => {
     const { patientId } = req.params;
 
     try {
+        // ✅ VÉRIFICATION : La famille ne voit que SES patients
+        if (req.user.role === "FAMILLE") {
+            const { data: patient, error: patientErr } = await supabase
+                .from("patients")
+                .select("famille_user_id")
+                .eq("id", patientId)
+                .single();
+            
+            if (patientErr || patient.famille_user_id !== req.user.userId) {
+                return res.status(403).json({ error: "Accès non autorisé à ce dossier" });
+            }
+        }
+
         const { data: visite, error: visiteError } = await supabase
             .from("visites")
             .select("id, aidant_id, alerte_geofence")
@@ -502,7 +515,7 @@ router.get("/active/:patientId", middleware(["FAMILLE", "COORDINATEUR"]), async 
             .maybeSingle();
 
         if (visiteError || !visite) {
-            return res.json({ hasPosition: false });
+            return res.json({ hasPosition: false, message: "Aucune visite en cours" });
         }
 
         const { data: lastPos, error: posError } = await supabase
@@ -514,7 +527,10 @@ router.get("/active/:patientId", middleware(["FAMILLE", "COORDINATEUR"]), async 
             .maybeSingle();
 
         if (posError || !lastPos) {
-            return res.json({ hasPosition: false });
+            return res.json({ 
+                hasPosition: false, 
+                message: "Position de l'aidant indisponible" 
+            });
         }
 
         const { data: aidant } = await supabase
@@ -530,11 +546,13 @@ router.get("/active/:patientId", middleware(["FAMILLE", "COORDINATEUR"]), async 
             last_update: lastPos.created_at,
             aidant_nom: aidant?.nom || "Intervenant",
             aidant_photo: aidant?.photo_url || null,
-            is_inside: !visite.alerte_geofence
+            is_inside: !visite.alerte_geofence,
+            distance_to_patient: visite.patient?.lat ? 
+                getDistance(lastPos.lat, lastPos.lng, visite.patient.lat, visite.patient.lng) : null
         });
         
     } catch (err) {
-        console.error("❌ Erreur:", err.message);
+        console.error("❌ Erreur active:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
@@ -557,12 +575,13 @@ router.get("/trajectory/:visite_id", middleware(['COORDINATEUR']), async (req, r
 });
 
 // ============================================================
-// 9. POSITION EN DIRECT POUR LA FAMILLE
+// 9. POSITION EN DIRECT POUR LA FAMILLE (SUIVI LIVE)
 // ============================================================
 router.get("/live-position/:visite_id", middleware(["FAMILLE", "COORDINATEUR"]), async (req, res) => {
     const { visite_id } = req.params;
     
     try {
+        // ✅ VÉRIFICATION : La famille ne voit que ses patients
         if (req.user.role === "FAMILLE") {
             const { data: visite } = await supabase
                 .from("visites")
@@ -829,12 +848,25 @@ router.post("/test-realtime", middleware(), async (req, res) => {
 });
 
 // ============================================================
-// 16. PROGRESSION DES VISITES (MAMAN)
+// 16. PROGRESSION DES VISITES (FAMILLE ET COORDINATEUR)
 // ============================================================
 router.get("/progress/:patientId", middleware(["FAMILLE", "COORDINATEUR"]), async (req, res) => {
     const { patientId } = req.params;
     
     try {
+        // ✅ VÉRIFICATION : La famille ne voit que SES patients
+        if (req.user.role === "FAMILLE") {
+            const { data: patient, error: patientErr } = await supabase
+                .from("patients")
+                .select("famille_user_id")
+                .eq("id", patientId)
+                .single();
+            
+            if (patientErr || patient.famille_user_id !== req.user.userId) {
+                return res.status(403).json({ error: "Accès non autorisé" });
+            }
+        }
+
         const { data: visites, error } = await supabase
             .from("visites")
             .select("statut")
@@ -847,6 +879,54 @@ router.get("/progress/:patientId", middleware(["FAMILLE", "COORDINATEUR"]), asyn
         const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
         
         res.json({ total, completed, progress });
+        
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============================================================
+// 17. HISTORIQUE COMPLET D'UNE VISITE POUR LA FAMILLE
+// ============================================================
+router.get("/history/:patientId", middleware(["FAMILLE", "COORDINATEUR"]), async (req, res) => {
+    const { patientId } = req.params;
+    const { limit = 20 } = req.query;
+    
+    try {
+        // ✅ VÉRIFICATION : La famille ne voit que SES patients
+        if (req.user.role === "FAMILLE") {
+            const { data: patient, error: patientErr } = await supabase
+                .from("patients")
+                .select("famille_user_id")
+                .eq("id", patientId)
+                .single();
+            
+            if (patientErr || patient.famille_user_id !== req.user.userId) {
+                return res.status(403).json({ error: "Accès non autorisé" });
+            }
+        }
+
+        const { data: visites, error } = await supabase
+            .from("visites")
+            .select(`
+                *,
+                patient:patients (nom_complet),
+                aidant:profiles!aidant_id (nom, photo_url)
+            `)
+            .eq("patient_id", patientId)
+            .order("heure_debut", { ascending: false })
+            .limit(parseInt(limit) || 20);
+        
+        if (error) throw error;
+        
+        // Formater les dates
+        const formattedVisites = visites.map(v => ({
+            ...v,
+            heure_debut_formatted: v.heure_debut ? new Date(v.heure_debut).toLocaleString('fr-FR') : null,
+            heure_fin_formatted: v.heure_fin ? new Date(v.heure_fin).toLocaleString('fr-FR') : null
+        }));
+        
+        res.json(formattedVisites);
         
     } catch (err) {
         res.status(500).json({ error: err.message });
