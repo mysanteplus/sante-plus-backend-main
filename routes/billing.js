@@ -1,3 +1,4 @@
+ 
 const axios = require("axios");
 const crypto = require("crypto");
 const express = require("express");
@@ -12,21 +13,18 @@ const { createNotification } = require("./notifications");
 // ============================================================
 
 const PACKS = {
-    // Packs médicaux SENIOR (avec patient)
     MEDICAL_SENIOR: {
         ESSENTIEL: { price: 45000, duration: 1, name: "Essentiel", visits: 4 },
         ACCOMPAGNEMENT: { price: 80000, duration: 1, name: "Accompagnement", visits: 8 },
         SERENITE: { price: 100000, duration: 1, name: "Sérénité Seniors", visits: 12 },
         PRIVILEGE: { price: 200000, duration: 1, name: "Privilège Famille", visits: 0 }
     },
-    // Packs MAMAN & BÉBÉ (avec patient)
     MEDICAL_MAMAN: {
         ESSENTIEL: { price: 65000, duration: 0.5, name: "Essentiel", weeks: 2 },
         CONFORT: { price: 100000, duration: 0.75, name: "Confort", weeks: 3 },
         SERENITE: { price: 140000, duration: 1, name: "Sérénité", weeks: 4 },
         PRIVILEGE: { price: 200000, duration: 1.25, name: "Privilège", weeks: 5 }
     },
-    // Pack Confort 24/7 (sans patient) - inchangé
     CONFORT_247: {
         price: 25000,
         duration: 1,
@@ -35,11 +33,14 @@ const PACKS = {
 };
 
 // ============================================================
-// 🔐 Vérification signature webhook
+// 🔐 VÉRIFICATION SIGNATURE WEBHOOK
 // ============================================================
 
-function verifyWebhookSignature(signature, payload) {
-    if (!signature || !process.env.FEDAPAY_WEBHOOK_SECRET) return false;
+function verifyWebhookSignature(signature, rawPayload) {
+    if (!signature || !process.env.FEDAPAY_WEBHOOK_SECRET) {
+        console.warn("⚠️ Signature ou secret webhook manquant");
+        return false;
+    }
     
     try {
         const parts = signature.split(',');
@@ -50,9 +51,12 @@ function verifyWebhookSignature(signature, payload) {
             else if (part.startsWith('s=')) signatureHash = part.substring(2);
         }
         
-        if (!timestamp || !signatureHash) return false;
+        if (!timestamp || !signatureHash) {
+            console.warn("⚠️ Format de signature invalide:", signature);
+            return false;
+        }
         
-        const signedPayload = timestamp + "." + payload;
+        const signedPayload = timestamp + "." + rawPayload;
         const expectedSignature = crypto
             .createHmac('sha256', process.env.FEDAPAY_WEBHOOK_SECRET)
             .update(signedPayload)
@@ -62,19 +66,20 @@ function verifyWebhookSignature(signature, payload) {
             Buffer.from(signatureHash, 'hex'),
             Buffer.from(expectedSignature, 'hex')
         );
+        
     } catch (err) {
+        console.error("❌ Erreur vérification signature:", err);
         return false;
     }
 }
 
 // ============================================================
-// 🔔 WEBHOOK FEDAPAY 
+// 🔔 WEBHOOK FEDAPAY
 // ============================================================
 
 router.post("/webhook", express.raw({ type: 'application/json' }), async (req, res) => {
     console.log("💰 [WEBHOOK] Signal reçu");
     
-    // ✅ RÉCUPÉRER LE PAYLOAD BRUT
     const rawBody = req.body.toString();
     let event;
     try {
@@ -85,7 +90,6 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
     
     const signature = req.headers['x-fedapay-signature'];
     
-    // ✅ VÉRIFICATION DE SIGNATURE AMÉLIORÉE
     if (!verifyWebhookSignature(signature, rawBody)) {
         console.error("❌ [WEBHOOK] Signature invalide");
         console.error("📝 Signature reçue:", signature);
@@ -93,7 +97,6 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
         return res.status(401).json({ error: "Signature invalide" });
     }
     
-    // ✅ TRAITER LE PAYMENT
     if (event.type === 'transaction.approved' || event.type === 'checkout.completed') {
         const transaction = event.data || event.entity || event.transaction;
         const transactionId = transaction.id;
@@ -104,7 +107,6 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
         console.log("📦 Métadonnées reçues:", metadata);
         
         try {
-            // ✅ RECHERCHER LA TRANSACTION EN ATTENTE
             const { data: pending, error: pendingErr } = await supabase
                 .from("pending_transactions")
                 .select("*")
@@ -115,7 +117,6 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
                 console.error("❌ Erreur recherche pending:", pendingErr);
             }
             
-            // ✅ EXTRAIRE LES IDs DES MÉTADONNÉES OU DE PENDING
             const patientId = metadata.patient_id || pending?.patient_id || null;
             const userId = metadata.user_id || pending?.user_id || null;
             const durationMonths = parseInt(metadata.duration_months) || pending?.duration_months || 1;
@@ -245,7 +246,6 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
                     .eq("id", pending.id);
             }
             
-            // ✅ NOTIFIER LA FAMILLE
             const { data: patient, error: patientErr } = await supabase
                 .from("patients")
                 .select("famille_user_id, nom_complet")
@@ -267,57 +267,11 @@ router.post("/webhook", express.raw({ type: 'application/json' }), async (req, r
         } catch (err) {
             console.error("❌ [WEBHOOK ERROR]:", err.message);
             console.error("📚 Stack:", err.stack);
-            // ✅ NE PAS RENVOYER D'ERREUR À FEDAPAY (200 OK)
-            // Le webhook de FedaPay doit toujours recevoir 200 pour éviter les retries
         }
     }
     
     res.sendStatus(200);
 });
-
-// ✅ FONCTION DE VÉRIFICATION DE SIGNATURE CORRIGÉE
-function verifyWebhookSignature(signature, rawPayload) {
-    if (!signature || !process.env.FEDAPAY_WEBHOOK_SECRET) {
-        console.warn("⚠️ Signature ou secret webhook manquant");
-        return false;
-    }
-    
-    try {
-        // ✅ EXTRAIRE timestamp ET signature
-        const parts = signature.split(',');
-        let timestamp = null, signatureHash = null;
-        
-        for (const part of parts) {
-            if (part.startsWith('t=')) timestamp = part.substring(2);
-            else if (part.startsWith('s=')) signatureHash = part.substring(2);
-        }
-        
-        if (!timestamp || !signatureHash) {
-            console.warn("⚠️ Format de signature invalide:", signature);
-            return false;
-        }
-        
-        // ✅ RECONSTRUIRE LE PAYLOAD SIGNÉ
-        const signedPayload = timestamp + "." + rawPayload;
-        
-        // ✅ CALCULER LA SIGNATURE ATTENDUE
-        const expectedSignature = crypto
-            .createHmac('sha256', process.env.FEDAPAY_WEBHOOK_SECRET)
-            .update(signedPayload)
-            .digest('hex');
-        
-        // ✅ COMPARAISON SÉCURISÉE
-        return crypto.timingSafeEqual(
-            Buffer.from(signatureHash, 'hex'),
-            Buffer.from(expectedSignature, 'hex')
-        );
-        
-    } catch (err) {
-        console.error("❌ Erreur vérification signature:", err);
-        return false;
-    }
-}
-
 
 // ============================================================
 // 📊 1. LISTER LES ABONNEMENTS
@@ -363,13 +317,13 @@ router.get("/", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
 });
 
 // ============================================================
-// ✅ 2. PAIEMENT MANUEL (Coordinateur)
+// ✅ 2. PAIEMENT MANUEL
 // ============================================================
 
 router.post("/pay", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
     const { abonnement_id, montant, transaction_id, mode_paiement } = req.body;
 
-       if (req.user.role === "FAMILLE") {
+    if (req.user.role === "FAMILLE") {
         const { data: abonnement, error: aboCheckErr } = await supabase
             .from("abonnements")
             .select(`
@@ -560,9 +514,6 @@ router.post("/initiate-payment", middleware(["FAMILLE"]), async (req, res) => {
 // 📝 4. GÉNÉRER UNE FACTURE
 // ============================================================
 
-// ============================================================
-// 📝 4. GÉNÉRER UNE FACTURE
-// ============================================================
 router.post("/generate", middleware(["FAMILLE"]), async (req, res) => {
     const { patient_id, montant, pack } = req.body;
 
@@ -649,7 +600,7 @@ router.get("/pending-transactions", middleware(["COORDINATEUR", "FAMILLE"]), asy
 });
 
 // ============================================================
-// 🧪 MODE TEST - Paiement simulé (sans FedaPay)
+// 🧪 MODE TEST - Paiement simulé
 // ============================================================
 
 router.post("/test-payment", middleware(["FAMILLE"]), async (req, res) => {
@@ -703,57 +654,8 @@ router.post("/test-payment", middleware(["FAMILLE"]), async (req, res) => {
 });
 
 // ============================================================
-// 💳 PAIEMENT POUR LA FAMILLE (test)
+// 💳 INITIATION PAIEMENT PACK CONFORT
 // ============================================================
-
-router.post("/family-pay", middleware(["FAMILLE"]), async (req, res) => {
-    const { abonnement_id, montant, mode_paiement } = req.body;
-    
-    console.log("💰 Paiement famille pour abonnement:", abonnement_id);
-    
-    try {
-        const paymentDate = new Date();
-        const endDate = new Date();
-        endDate.setMonth(endDate.getMonth() + 1);
-        endDate.setDate(endDate.getDate() + 5);
-        
-        const updateData = {
-            montant_paye: montant,
-            statut: "Payé",
-            date_paiement: paymentDate.toISOString(),
-            date_fin_abonnement: endDate.toISOString(),
-            mode_paiement: mode_paiement || "FAMILLE"
-        };
-        
-        const { data: abo, error: errAbo } = await supabase
-            .from("abonnements")
-            .update(updateData)
-            .eq("id", abonnement_id)
-            .select('*, patient:patients(id, nom_complet, famille_user_id)')
-            .single();
-
-        if (errAbo) throw errAbo;
-
-        if (abo && abo.patient) {
-            await supabase
-                .from("patients")
-                .update({
-                    statut_paiement: "A jour",
-                    date_dernier_paiement: paymentDate.toISOString(),
-                    date_fin_abonnement: endDate.toISOString()
-                })
-                .eq("id", abo.patient.id);
-        }
-
-        res.json({ status: "success" });
-        
-    } catch (err) {
-        console.error("❌ Erreur paiement famille:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-
 
 router.post("/init-confort-payment", middleware(["FAMILLE"]), async (req, res) => {
     const userId = req.user.userId;
@@ -784,7 +686,7 @@ router.post("/init-confort-payment", middleware(["FAMILLE"]), async (req, res) =
             customer_firstname: profile.nom?.split(" ")[0] || "Client",
             customer_lastname: profile.nom?.split(" ").slice(1).join(" ") || "Santé Plus",
             callback_url: `${process.env.API_URL}/api/billing/webhook`,
-            cancel_url: "https://stevenckohr-pixel.github.io/#billing?status=cancel",
+            cancel_url: "https://app.mysanteplus.com/#billing?status=cancel",
             metadata: {
                 user_id: userId,
                 type_compte: "SANS_PATIENT",
@@ -833,88 +735,7 @@ router.post("/init-confort-payment", middleware(["FAMILLE"]), async (req, res) =
 });
 
 // ============================================================
-// 💳 7. SOUSCRIRE AU PACK CONFORT 24/7 (comptes SANS_PATIENT)
-// ============================================================
-
-router.post("/subscribe-confort", middleware(["FAMILLE"]), async (req, res) => {
-    if (process.env.NODE_ENV === "production") {
-        return res.status(403).json({
-            error: "Route désactivée en production. Utilisez init-confort-payment."
-        });
-    }
-    
-    const { montant, duree_mois } = req.body;
-    const userId = req.user.userId;
-    
-    try {
-        const { data: profile, error: profileErr } = await supabase
-            .from("profiles")
-            .select("type_compte, pack_confort_actif, date_fin_pack_confort")
-            .eq("id", userId)
-            .single();
-        
-        if (profileErr) throw profileErr;
-        
-        if (profile.type_compte !== 'SANS_PATIENT') {
-            return res.status(403).json({ error: "Ce pack est réservé aux comptes sans patient" });
-        }
-        
-        const duration = duree_mois || 1;
-        const amount = montant || PACKS.CONFORT_247.price * duration;
-        
-        const startDate = new Date();
-        const endDate = new Date(startDate);
-        endDate.setMonth(endDate.getMonth() + duration);
-        endDate.setDate(endDate.getDate() + 5);
-        
-        const monthYear = startDate.toLocaleDateString("fr-FR", { month: "2-digit", year: "numeric" });
-        
-        const { data: abonnement, error: aboErr } = await supabase
-            .from("abonnements")
-            .insert([{
-                user_id: userId,
-                mois_annee: monthYear,
-                montant_du: amount,
-                montant_paye: amount,
-                statut: "Payé",
-                type_pack: "CONFORT_247",
-                date_paiement: startDate.toISOString(),
-                date_fin_abonnement: endDate.toISOString(),
-                duree_mois: duration,
-                mode_paiement: req.body.mode_paiement || "MANUEL"
-            }])
-            .select()
-            .single();
-        
-        if (aboErr) throw aboErr;
-        
-        const { error: updateErr } = await supabase
-            .from("profiles")
-            .update({
-                pack_confort_actif: true,
-                date_fin_pack_confort: endDate.toISOString()
-            })
-            .eq("id", userId);
-        
-        if (updateErr) throw updateErr;
-        
-        console.log(`✅ Pack Confort activé pour ${userId} jusqu'au ${endDate.toISOString()}`);
-        
-        res.json({
-            status: "success",
-            message: `Pack Confort activé pour ${duration} mois`,
-            abonnement_id: abonnement.id,
-            date_fin: endDate.toISOString()
-        });
-        
-    } catch (err) {
-        console.error("❌ Erreur souscription Pack Confort:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ============================================================
-// 🔍 8. VÉRIFIER LE STATUT DU PACK CONFORT
+// 🔍 VÉRIFIER LE STATUT DU PACK CONFORT
 // ============================================================
 
 router.get("/confort-status", middleware(["FAMILLE"]), async (req, res) => {
@@ -968,8 +789,9 @@ router.get("/confort-status", middleware(["FAMILLE"]), async (req, res) => {
 });
 
 // ============================================================
-// 🔍 9. VÉRIFIER LE STATUT D'ABONNEMENT
+// 🔍 VÉRIFIER LE STATUT D'ABONNEMENT
 // ============================================================
+
 router.get("/subscription-status", middleware(["FAMILLE"]), async (req, res) => {
     try {
         const userId = req.user.userId;
@@ -1037,6 +859,9 @@ router.get("/subscription-status", middleware(["FAMILLE"]), async (req, res) => 
     }
 });
 
+// ============================================================
+// 📄 GÉNÉRER UNE FACTURE (détails)
+// ============================================================
 
 async function assertCanAccessAbonnement(req, abonnementId) {
     if (req.user.role === "COORDINATEUR") {
@@ -1067,10 +892,6 @@ async function assertCanAccessAbonnement(req, abonnementId) {
 
     return ownsSansPatientInvoice || ownsPatientInvoice;
 }
-
-// ============================================================
-// 📄 GÉNÉRER UNE FACTURE (détails)
-// ============================================================
 
 router.get("/invoice/:id", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
     const { id } = req.params;
@@ -1187,10 +1008,8 @@ router.get("/invoice-data/:id", middleware(["COORDINATEUR", "FAMILLE"]), async (
     }
 });
 
-
-
 // ============================================================
-// 📄 RÉCUPÉRER UNE FACTURE PAR ID (DOIT ÊTRE EN DERNIER)
+// 📄 RÉCUPÉRER UNE FACTURE PAR ID
 // ============================================================
 
 router.get("/:id", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
@@ -1208,48 +1027,6 @@ router.get("/:id", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => 
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
-});
-
-
-// billing.js - AJOUTER CETTE ROUTE POUR TESTER LE WEBHOOK
-
-router.get("/webhook/test", async (req, res) => {
-    const testPayload = {
-        type: 'transaction.approved',
-        data: {
-            id: 'test_' + Date.now(),
-            amount: 1000,
-            metadata: {
-                patient_id: 'test-patient-id',
-                user_id: 'test-user-id',
-                duration_months: 1,
-                pack_name: 'ESSENTIEL_SENIOR'
-            }
-        }
-    };
-    
-    // Simuler un appel webhook
-    const mockReq = {
-        body: JSON.stringify(testPayload),
-        headers: {
-            'x-fedapay-signature': 't=123456,s=' + crypto
-                .createHmac('sha256', process.env.FEDAPAY_WEBHOOK_SECRET || 'test-secret')
-                .update('123456.' + JSON.stringify(testPayload))
-                .digest('hex')
-        }
-    };
-    
-    const mockRes = {
-        status: (code) => ({ json: (data) => console.log(`Status ${code}:`, data) }),
-        sendStatus: (code) => console.log(`SendStatus ${code}`)
-    };
-    
-    await webhookHandler(mockReq, mockRes);
-    
-    res.json({ 
-        success: true, 
-        message: "Webhook test exécuté. Vérifiez les logs." 
-    });
 });
 
 module.exports = router;
