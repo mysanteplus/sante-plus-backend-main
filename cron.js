@@ -1,21 +1,12 @@
+// cron.js - VERSION PRODUCTION CORRIGÉE
+
 const cron = require("node-cron");
 const supabase = require("./supabaseClient");
 const { autoAssignPendingCommands } = require("./routes/commandes");
 
-// Auto-assignation des commandes toutes les 5 minutes
-cron.schedule("*/5 * * * *", async () => {
-    console.log("🤖 [CRON] Vérification des commandes non assignées...");
-    await autoAssignPendingCommands();
-});
-
-// Importer le module de notifications (après sa création)
-let createNotification = null;
-try {
-    const notificationsModule = require("./routes/notifications");
-    createNotification = notificationsModule.createNotification;
-} catch (err) {
-    console.log("⚠️ Module notifications non chargé (sera chargé plus tard)");
-}
+// ============================================================
+// FONCTIONS UTILITAIRES
+// ============================================================
 
 /**
  * 📅 CALCULER LA DATE DE FIN D'ABONNEMENT (selon durée)
@@ -63,8 +54,29 @@ function formatDate(date) {
     });
 }
 
+// Importer le module de notifications
+let createNotification = null;
+try {
+    const notificationsModule = require("./routes/notifications");
+    createNotification = notificationsModule.createNotification;
+} catch (err) {
+    console.log("⚠️ Module notifications non chargé (sera chargé plus tard)");
+}
+
+// ============================================================
+// JOBS CRON
+// ============================================================
+
 function startCronJobs() {
   
+  /**
+   * 0. AUTO-ASSIGNATION DES COMMANDES (toutes les 5 minutes)
+   */
+  cron.schedule("*/5 * * * *", async () => {
+    console.log("🤖 [CRON] Vérification des commandes non assignées...");
+    await autoAssignPendingCommands();
+  });
+
   /**
    * 1. GÉNÉRATION DES FACTURES (Le 1er du mois à 00h01)
    */
@@ -76,7 +88,10 @@ function startCronJobs() {
       .select("id, nom_complet, famille_user_id, montant_prevu, type_pack, duree_abonnement_mois")
       .eq("statut_validation", "ACTIF");
 
-    if (error || !patients) return console.error("❌ Erreur lecture patients pour facturation");
+    if (error || !patients) {
+      console.error("❌ Erreur lecture patients pour facturation:", error);
+      return;
+    }
 
     const monthYear = new Date().toLocaleDateString("fr-FR", {
       month: "2-digit",
@@ -109,15 +124,15 @@ function startCronJobs() {
         type_pack: p.type_pack
       }]);
 
-if (p.famille_user_id && createNotification) {
-  await createNotification(
-    p.famille_user_id,
-    "💳 Nouvelle facture disponible",
-    `L'abonnement de ${p.nom_complet} pour ${monthYear} (${montant.toLocaleString()} CFA) est disponible.`,
-    "billing",
-    "/#billing"
-  );
-}
+      if (p.famille_user_id && createNotification) {
+        await createNotification(
+          p.famille_user_id,
+          "💳 Nouvelle facture disponible",
+          `L'abonnement de ${p.nom_complet} pour ${monthYear} (${montant.toLocaleString()} CFA) est disponible.`,
+          "billing",
+          "/#billing"
+        );
+      }
       generatedCount++;
     }
     console.log(`✅ ${generatedCount} nouvelles factures générées pour ${monthYear}`);
@@ -165,16 +180,15 @@ if (p.famille_user_id && createNotification) {
         
         bloques++;
 
-
-          if (patient.famille_user_id && createNotification) {
-  await createNotification(
-    patient.famille_user_id,
-    "🔒 Abonnement expiré",
-    `L'abonnement pour ${patient.nom_complet} est expiré depuis le ${formatDate(endDate)}. Renouvelez pour réactiver le suivi.`,
-    "expiration",
-    "/#subscription"
-  );
-}
+        if (patient.famille_user_id && createNotification) {
+          await createNotification(
+            patient.famille_user_id,
+            "🔒 Abonnement expiré",
+            `L'abonnement pour ${patient.nom_complet} est expiré depuis le ${formatDate(endDate)}. Renouvelez pour réactiver le suivi.`,
+            "expiration",
+            "/#subscription"
+          );
+        }
           
         console.log(`🔒 Patient bloqué: ${patient.nom_complet} (expiré depuis ${formatDate(endDate)})`);
       }
@@ -190,15 +204,15 @@ if (p.famille_user_id && createNotification) {
         
         debloques++;
 
-if (patient.famille_user_id && createNotification) {
-  await createNotification(
-    patient.famille_user_id,
-    "✅ Abonnement réactivé",
-    `Votre abonnement pour ${patient.nom_complet} est actif jusqu'au ${formatDate(endDate)}.`,
-    "subscription",
-    "/#dashboard"
-  );
-}
+        if (patient.famille_user_id && createNotification) {
+          await createNotification(
+            patient.famille_user_id,
+            "✅ Abonnement réactivé",
+            `Votre abonnement pour ${patient.nom_complet} est actif jusqu'au ${formatDate(endDate)}.`,
+            "subscription",
+            "/#dashboard"
+          );
+        }
           
         console.log(`✅ Patient réactivé: ${patient.nom_complet} (valable jusqu'au ${formatDate(endDate)})`);
       }
@@ -206,14 +220,14 @@ if (patient.famille_user_id && createNotification) {
       // ⚠️ RAPPEL SI EXPIRATION DANS MOINS DE 5 JOURS
       else if (isValid && joursRestants <= 5 && joursRestants > 0 && patient.famille_user_id) {
         if (createNotification) {
-  await createNotification(
-    patient.famille_user_id,
-    "⚠️ Abonnement bientôt expiré",
-    `Votre abonnement pour ${patient.nom_complet} expire dans ${joursRestants} jour(s) (le ${formatDate(endDate)}).`,
-    "expiration",
-    "/#subscription"
-  );
-}
+          await createNotification(
+            patient.famille_user_id,
+            "⚠️ Abonnement bientôt expiré",
+            `Votre abonnement pour ${patient.nom_complet} expire dans ${joursRestants} jour(s) (le ${formatDate(endDate)}).`,
+            "expiration",
+            "/#subscription"
+          );
+        }
           
         rappelsEnvoyes++;
         console.log(`⚠️ Rappel envoyé pour ${patient.nom_complet}: expire dans ${joursRestants} jours`);
@@ -248,21 +262,23 @@ if (patient.famille_user_id && createNotification) {
         (patient.date_dernier_paiement ? calculateSubscriptionEndDate(patient.date_dernier_paiement, duration) : null);
       
       if (joursRestants >= 3 && joursRestants <= 10 && patient.famille_user_id) {
-       if (createNotification) {
-  await createNotification(
-    patient.famille_user_id,
-    "📆 Renouvelez votre abonnement",
-    `Plus que ${joursRestants} jours avant l'expiration de l'abonnement de ${patient.nom_complet} (le ${formatDate(endDate)}).`,
-    "expiration",
-    "/#subscription"
-  );
-}
+        if (createNotification) {
+          await createNotification(
+            patient.famille_user_id,
+            "📆 Renouvelez votre abonnement",
+            `Plus que ${joursRestants} jours avant l'expiration de l'abonnement de ${patient.nom_complet} (le ${formatDate(endDate)}).`,
+            "expiration",
+            "/#subscription"
+          );
+        }
         rappels++;
       }
     }
 
     console.log(`📧 [CRON] ${rappels} rappels hebdomadaires envoyés`);
   });
+
+  console.log("✅ [CRON] Tous les jobs planifiés sont actifs");
 }
 
 module.exports = startCronJobs;
