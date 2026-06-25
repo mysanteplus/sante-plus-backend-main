@@ -13,22 +13,12 @@ const { createNotification } = require("./routes/notifications");
 const app = express();
 app.set("trust proxy", 1);
 
-
 // ============================================================
 // VERSION DE L'APPLICATION
 // ============================================================
 
 const APP_VERSION = '2.0.3';
 const BUILD_DATE = new Date().toISOString();
-
-app.get('/version.json', (req, res) => {
-  res.json({
-    version: APP_VERSION,
-    timestamp: Date.now(),
-    buildDate: BUILD_DATE,
-    environment: process.env.NODE_ENV || 'production'
-  });
-});
 
 // Ajouter la version aux headers
 app.use((req, res, next) => {
@@ -99,9 +89,8 @@ app.use((req, res, next) => {
 });
 
 // ============================================================
-// CORS  
+// CORS - SÉCURISÉ
 // ============================================================
-// ✅ CORS - Sécurisé
 const allowedOrigins = process.env.NODE_ENV === 'production' 
     ? ['https://app.mysanteplus.com']
     : ['https://app.mysanteplus.com', 'http://localhost:5500', 'http://127.0.0.1:5500'];
@@ -127,6 +116,26 @@ app.use(cors({
 
 // Health check
 app.get("/", (req, res) => res.send("🚀 Santé Plus Services API opérationnelle"));
+
+// ============================================================
+// CONFIGURATION INJECTION (pour le frontend)
+// ============================================================
+
+/**
+ * ✅ Endpoint pour injecter la configuration au frontend
+ * Ceci permet d'éviter d'avoir des clés en dur dans le code frontend
+ */
+app.get('/api/config', (req, res) => {
+    // ✅ Uniquement les variables nécessaires au frontend
+    res.json({
+        supabaseUrl: process.env.SUPABASE_URL,
+        supabaseKey: process.env.SUPABASE_SERVICE_KEY,
+        apiUrl: process.env.API_URL || `${req.protocol}://${req.get('host')}/api`,
+        environment: process.env.NODE_ENV || 'production',
+        // Ne jamais exposer les clés secrètes ici !
+        // Seulement ce qui est nécessaire pour le frontend
+    });
+});
 
 // ============================================================
 // ROUTES DE NOTIFICATIONS
@@ -268,7 +277,7 @@ console.log("  - aidantRoutes:", typeof aidantRoutes, aidantRoutes ? '✅' : '�
 console.log("  - dashboardRoutes:", typeof dashboardRoutes, dashboardRoutes ? '✅' : '❌');
 
 // ============================================================
-// ROUTES PRINCIPALES (CORRIGÉ)
+// ROUTES PRINCIPALES
 // ============================================================
 
 // ✅ Routes d'authentification
@@ -325,37 +334,6 @@ app.get("/api/test-notification/:userId", async (req, res) => {
       error: err.message 
     });
   }
-});
-
-
-// ============================================================
-// CONFIGURATION INJECTION (pour le frontend)
-// ============================================================
-
-/**
- * ✅ Endpoint pour injecter la configuration au frontend
- * Ceci permet d'éviter d'avoir des clés en dur dans le code frontend
- */
-app.get('/api/config', (req, res) => {
-    // ✅ Uniquement les variables nécessaires au frontend
-    res.json({
-        supabaseUrl: process.env.SUPABASE_URL,
-        supabaseKey: process.env.SUPABASE_SERVICE_KEY,
-        apiUrl: process.env.API_URL || `${req.protocol}://${req.get('host')}/api`,
-        environment: process.env.NODE_ENV || 'production',
-        // Ne jamais exposer les clés secrètes ici !
-        // Seulement ce qui est nécessaire pour le frontend
-    });
-});
-
-// ✅ Version simplifiée pour les assets
-app.get('/version.json', (req, res) => {
-    res.json({
-        version: APP_VERSION,
-        timestamp: Date.now(),
-        buildDate: BUILD_DATE,
-        environment: process.env.NODE_ENV || 'production'
-    });
 });
 
 // ============================================================
