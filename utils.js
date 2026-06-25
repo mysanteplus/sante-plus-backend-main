@@ -1,4 +1,3 @@
- 
 const axios = require("axios");
 const supabase = require("./supabaseClient");
 
@@ -147,13 +146,19 @@ function getRealtimeChannel() {
 }
 
 // ============================================================
-// 🔒 VÉRIFICATION RÉELLE DE L'ABONNEMENT
+// 🔒 VÉRIFICATION RÉELLE DE L'ABONNEMENT (PRODUCTION READY)
 // ============================================================
 
 async function checkActiveSubscription(userId, userRole) {
     // ✅ Les coordinateurs et aidants ont toujours accès (ils n'ont pas d'abonnement)
     if (userRole === "COORDINATEUR" || userRole === "AIDANT") {
         return true;
+    }
+    
+    // ✅ Si pas d'userId, refuser l'accès
+    if (!userId) {
+        console.error("❌ checkActiveSubscription: userId manquant");
+        return false;
     }
     
     try {
@@ -165,7 +170,7 @@ async function checkActiveSubscription(userId, userRole) {
             .single();
         
         if (profileErr) {
-            console.error("❌ Erreur récupération profil:", profileErr);
+            console.error(`❌ Erreur récupération profil ${userId}:`, profileErr.message);
             return false;
         }
         
@@ -179,7 +184,7 @@ async function checkActiveSubscription(userId, userRole) {
                 .single();
             
             if (patientErr || !patient) {
-                console.error("❌ Patient non trouvé pour la famille:", userId);
+                console.error(`❌ Patient non trouvé pour la famille ${userId}:`, patientErr?.message);
                 return false;
             }
             
@@ -227,7 +232,7 @@ async function checkActiveSubscription(userId, userRole) {
                 .maybeSingle();
             
             if (aboErr) {
-                console.error("❌ Erreur récupération abonnement Confort:", aboErr);
+                console.error(`❌ Erreur récupération abonnement Confort pour ${userId}:`, aboErr.message);
                 return false;
             }
             
@@ -258,11 +263,13 @@ async function checkActiveSubscription(userId, userRole) {
             return true;
         }
         
-        // Autres cas : pas d'abonnement nécessaire
-        return true;
+        // 4. Autres cas (type_compte non défini ou autre)
+        // Par sécurité, on refuse l'accès
+        console.log(`⚠️ Type de compte non reconnu pour ${userId}: ${profile?.type_compte || 'non défini'}`);
+        return false;
         
     } catch (err) {
-        console.error("❌ Erreur checkActiveSubscription:", err);
+        console.error(`❌ Erreur checkActiveSubscription pour ${userId}:`, err.message);
         return false;
     }
 }
