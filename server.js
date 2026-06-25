@@ -13,6 +13,30 @@ const { createNotification } = require("./routes/notifications");
 const app = express();
 app.set("trust proxy", 1);
 
+
+// ============================================================
+// VERSION DE L'APPLICATION
+// ============================================================
+
+const APP_VERSION = '2.0.2';
+const BUILD_DATE = new Date().toISOString();
+
+app.get('/version.json', (req, res) => {
+  res.json({
+    version: APP_VERSION,
+    timestamp: Date.now(),
+    buildDate: BUILD_DATE,
+    environment: process.env.NODE_ENV || 'production'
+  });
+});
+
+// Ajouter la version aux headers
+app.use((req, res, next) => {
+  res.setHeader('X-App-Version', APP_VERSION);
+  res.setHeader('X-Build-Date', BUILD_DATE);
+  next();
+});
+
 // ============================================================
 // CONFIGURATION MULTER
 // ============================================================
