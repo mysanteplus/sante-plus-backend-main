@@ -1,3 +1,5 @@
+// routes/commandes.js - VERSION COMPLÈTE PRODUCTION
+
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
@@ -6,7 +8,6 @@ const { checkActiveSubscription } = require("../utils");
 const { createNotification } = require("./notifications");
 const multer = require("multer");
 const { getRealtimeChannel } = require("../utils");
-
 
 const upload = multer({ 
     storage: multer.memoryStorage(),
@@ -17,7 +18,6 @@ const upload = multer({
         files: 1,
         parts: 20
     },
-    // Filtrer les types de fichiers
     fileFilter: (req, file, cb) => {
         const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
         if (allowedTypes.includes(file.mimetype)) {
@@ -28,9 +28,10 @@ const upload = multer({
     }
 });
 
-/**
- * 💊 1. CRÉER UNE COMMANDE (Famille avec/sans patient, Coordinateur)
- */
+// ============================================================
+// 💊 1. CRÉER UNE COMMANDE (Famille avec/sans patient, Coordinateur)
+// ============================================================
+
 router.post("/add", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) => {
     const { patient_id, liste_medocs, type_commande, urgent, images } = req.body;
     
@@ -48,7 +49,6 @@ router.post("/add", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) =>
         console.log(`✅ Abonnement actif pour ${req.user.userId}`);
     }
     
-    
     // Récupérer le type de compte de l'utilisateur
     const { data: profile, error: profileErr } = await supabase
         .from("profiles")
@@ -64,26 +64,25 @@ router.post("/add", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) =>
     }
     
     if (isSansPatient && patient_id) {
-        // Un compte sans patient ne peut pas commander pour un patient
         return res.status(400).json({ error: "Vous ne pouvez pas commander pour un patient" });
     }
 
     if (!isSansPatient && req.user.role === "FAMILLE") {
-    const { data: patient, error: patientCheckErr } = await supabase
-        .from("patients")
-        .select("id, famille_user_id")
-        .eq("id", patient_id)
-        .eq("famille_user_id", req.user.userId)
-        .maybeSingle();
+        const { data: patient, error: patientCheckErr } = await supabase
+            .from("patients")
+            .select("id, famille_user_id")
+            .eq("id", patient_id)
+            .eq("famille_user_id", req.user.userId)
+            .maybeSingle();
 
-    if (patientCheckErr) throw patientCheckErr;
+        if (patientCheckErr) throw patientCheckErr;
 
-    if (!patient) {
-        return res.status(403).json({
-            error: "Accès non autorisé à ce dossier patient"
-        });
+        if (!patient) {
+            return res.status(403).json({
+                error: "Accès non autorisé à ce dossier patient"
+            });
+        }
     }
-}
     
     try {
         let commandeData = {
@@ -95,7 +94,6 @@ router.post("/add", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) =>
             demandeur_id: req.user.userId
         };
         
-        // Lier soit à patient_id, soit à user_id
         if (isSansPatient) {
             commandeData.user_id = req.user.userId;
             commandeData.patient_id = null;
@@ -112,7 +110,6 @@ router.post("/add", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) =>
 
         if (error) throw error;
         
-        // Notification au coordinateur (optionnelle)
         const channel = getRealtimeChannel();
         await channel.send({
             type: 'broadcast',
@@ -133,6 +130,10 @@ router.post("/add", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) =>
         res.status(500).json({ error: err.message });
     }
 });
+
+// ============================================================
+// 📋 2. AIDANT PREND EN CHARGE UNE COMMANDE
+// ============================================================
 
 router.post("/accept", middleware(["AIDANT"]), async (req, res) => {
     const { commandeId } = req.body;
@@ -171,7 +172,6 @@ router.post("/accept", middleware(["AIDANT"]), async (req, res) => {
         if (error) throw error;
         
         const channel = getRealtimeChannel();
-
         await channel.send({
             type: "broadcast",
             event: "commande_updated",
@@ -205,16 +205,14 @@ router.post("/accept", middleware(["AIDANT"]), async (req, res) => {
     }
 });
 
+// ============================================================
+// 💰 3. CONFIRMER & ASSIGNER (Coordinateur)
+// ============================================================
 
-
-/**
- * 💰 2. CONFIRMER LE PRIX & ASSIGNER (Coordinateur)
- */
 router.post("/confirm", middleware(["COORDINATEUR"]), async (req, res) => {
     const { commandeId, aidant_id } = req.body;
     
     try {
-        // Vérifier que l'aidant existe
         const { data: aidant, error: aidantErr } = await supabase
             .from("profiles")
             .select("id, nom")
@@ -226,12 +224,11 @@ router.post("/confirm", middleware(["COORDINATEUR"]), async (req, res) => {
             return res.status(400).json({ error: "Aidant invalide" });
         }
         
-        // Assigner l'aidant à la commande (sans prix)
         const { data: cmd, error } = await supabase
             .from("commandes_meds")
             .update({
                 aidant_id,
-                statut: "En cours de livraison"  // Nouveau statut
+                statut: "En cours de livraison"
             })
             .eq("id", commandeId)
             .select('*, patient:patients(nom_complet, famille_user_id)')
@@ -239,14 +236,13 @@ router.post("/confirm", middleware(["COORDINATEUR"]), async (req, res) => {
 
         if (error) throw error;
 
-        // Notification à l'aidant
-            await createNotification(
-                aidant_id,
-                "📦 Nouvelle commande à livrer",
-                `Une commande pour ${cmd.patient?.nom_complet || "un patient"} vous a été assignée.`,
-                "commande",
-                "/#commandes"
-            );
+        await createNotification(
+            aidant_id,
+            "📦 Nouvelle commande à livrer",
+            `Une commande pour ${cmd.patient?.nom_complet || "un patient"} vous a été assignée.`,
+            "commande",
+            "/#commandes"
+        );
 
         res.json({ status: "success" });
     } catch (err) {
@@ -255,10 +251,10 @@ router.post("/confirm", middleware(["COORDINATEUR"]), async (req, res) => {
     }
 });
 
+// ============================================================
+// 📋 4. ASSIGNER UNE COMMANDE À UN AIDANT (Coordinateur)
+// ============================================================
 
-/**
- * 📋 ASSIGNER UNE COMMANDE À UN AIDANT (Coordinateur)
- */
 router.post("/assign", middleware(["COORDINATEUR"]), async (req, res) => {
     const { commande_id, aidant_id, notes } = req.body;
     
@@ -269,7 +265,6 @@ router.post("/assign", middleware(["COORDINATEUR"]), async (req, res) => {
     }
     
     try {
-        // 1. Vérifier que la commande existe
         const { data: commande, error: checkErr } = await supabase
             .from("commandes_meds")
             .select("id, statut, patient_id")
@@ -284,7 +279,6 @@ router.post("/assign", middleware(["COORDINATEUR"]), async (req, res) => {
             return res.status(400).json({ error: "Cette commande n'est plus disponible" });
         }
         
-        // 2. Vérifier que l'aidant existe
         const { data: aidant, error: aidantErr } = await supabase
             .from("profiles")
             .select("id, nom")
@@ -296,7 +290,6 @@ router.post("/assign", middleware(["COORDINATEUR"]), async (req, res) => {
             return res.status(400).json({ error: "Aidant invalide" });
         }
         
-        // 3. Assigner l'aidant à la commande
         const { data: updated, error: updateErr } = await supabase
             .from("commandes_meds")
             .update({
@@ -319,7 +312,6 @@ router.post("/assign", middleware(["COORDINATEUR"]), async (req, res) => {
             throw updateErr;
         }
 
-       // 4. Notifications : interne + push système
         await createNotification(
             aidant_id,
             "📦 Nouvelle commande à livrer",
@@ -340,7 +332,6 @@ router.post("/assign", middleware(["COORDINATEUR"]), async (req, res) => {
             );
         }
         
-        // 5. Realtime update
         const channel = getRealtimeChannel();
         await channel.send({
             type: 'broadcast',
@@ -361,10 +352,9 @@ router.post("/assign", middleware(["COORDINATEUR"]), async (req, res) => {
     }
 });
 
-
-/**
- * ✅ VALIDER LA LIVRAISON (Coordinateur)
- */
+// ============================================================
+// ✅ 5. VALIDER LA LIVRAISON (Coordinateur)
+// ============================================================
 
 router.post("/validate", middleware(["COORDINATEUR"]), async (req, res) => {
     const { commandeId } = req.body;
@@ -408,18 +398,16 @@ router.post("/validate", middleware(["COORDINATEUR"]), async (req, res) => {
     }
 });
 
+// ============================================================
+// 📦 6. AIDANT LIVRE LA COMMANDE (avec plusieurs photos)
+// ============================================================
 
-
-/**
- * 📦 AIDANT LIVRE LA COMMANDE (avec plusieurs photos) - VERSION CORRIGÉE
- */
 router.post("/:id/deliver", middleware(["AIDANT"]), upload.array('photos', 5), async (req, res) => {
     console.log("🔵 [DELIVER] Début");
     console.log("🔵 Param ID:", req.params.id);
     console.log("🔵 Body:", req.body);
     console.log("🔵 Files reçus:", req.files ? req.files.length : 0);
     
-    // Afficher les détails des fichiers pour debug
     if (req.files && req.files.length > 0) {
         req.files.forEach((file, i) => {
             console.log(`📸 Fichier ${i}:`, {
@@ -444,7 +432,6 @@ router.post("/:id/deliver", middleware(["AIDANT"]), upload.array('photos', 5), a
         return res.status(400).json({ error: "Au moins une photo obligatoire" });
     }
 
-    // Vérifier la taille de chaque photo
     for (const photo of photoFiles) {
         if (photo.size > 10 * 1024 * 1024) {
             return res.status(400).json({ error: "Une photo dépasse 10MB" });
@@ -452,7 +439,6 @@ router.post("/:id/deliver", middleware(["AIDANT"]), upload.array('photos', 5), a
     }
 
     try {
-        // 1. Vérifier que la commande existe
         console.log("🔍 Vérification commande:", commandeId);
         const { data: commande, error: checkErr } = await supabase
             .from("commandes_meds")
@@ -473,13 +459,11 @@ router.post("/:id/deliver", middleware(["AIDANT"]), upload.array('photos', 5), a
             return res.status(400).json({ error: "Commande déjà livrée" });
         }
 
-        // 2. Upload des photos vers Supabase Storage
         console.log("📤 Upload des photos vers Supabase Storage...");
         const uploadedPhotos = [];
         
         for (let i = 0; i < photoFiles.length; i++) {
             const photo = photoFiles[i];
-            // Générer un nom de fichier unique
             const timestamp = Date.now();
             const random = Math.random().toString(36).substring(7);
             const extension = photo.originalname.split('.').pop() || 'jpg';
@@ -503,7 +487,6 @@ router.post("/:id/deliver", middleware(["AIDANT"]), upload.array('photos', 5), a
                 throw new Error("Upload échoué: " + uploadError.message);
             }
             
-            // Récupérer l'URL publique
             const { data: urlData } = supabase.storage.from("preuves").getPublicUrl(fileName);
             uploadedPhotos.push(urlData.publicUrl);
             console.log(`✅ Upload réussi: ${urlData.publicUrl}`);
@@ -512,13 +495,12 @@ router.post("/:id/deliver", middleware(["AIDANT"]), upload.array('photos', 5), a
         console.log(`📸 ${uploadedPhotos.length} photos uploadées avec succès`);
         console.log("📸 URLs:", uploadedPhotos);
 
-        // 3. Mettre à jour la commande dans la base de données
         console.log("📝 Mise à jour de la commande dans Supabase...");
         const updateData = {
             aidant_id: req.user.userId,
             statut: "Livrée",
             date_livraison: new Date().toISOString(),
-            photos_livraison: uploadedPhotos,  // ✅ Tableau d'URLs
+            photos_livraison: uploadedPhotos,
             notes_livraison: notes_livraison || null
         };
         
@@ -534,7 +516,6 @@ router.post("/:id/deliver", middleware(["AIDANT"]), upload.array('photos', 5), a
             throw new Error("Mise à jour échouée: " + updateError.message);
         }
 
-        // 4. Vérifier que les données ont bien été sauvegardées
         const { data: updatedCommande, error: verifyError } = await supabase
             .from("commandes_meds")
             .select("photos_livraison")
@@ -545,7 +526,6 @@ router.post("/:id/deliver", middleware(["AIDANT"]), upload.array('photos', 5), a
             console.log("✅ Vérification après update - photos_livraison:", updatedCommande.photos_livraison);
         }
 
-        // 5. Notifications (optionnel)
         let familleId = commande.user_id;
         let nomCommande = "votre commande personnelle";
         
@@ -592,11 +572,8 @@ router.post("/:id/deliver", middleware(["AIDANT"]), upload.array('photos', 5), a
     }
 });
 
-
-
-
 // ============================================================
-// 📋 4. LISTER LES COMMANDES (FILTRÉ PAR RÔLE)
+// 📋 7. LISTER LES COMMANDES (FILTRÉ PAR RÔLE)
 // ============================================================
 
 router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, res) => {
@@ -617,14 +594,10 @@ router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, r
         `);
 
         if (req.user.role === "COORDINATEUR") {
-            // ✅ Coordinateur : voit tout
-            // Pas de filtre
+            // Coordinateur : voit tout
         }
         else if (req.user.role === "AIDANT") {
-            // ✅ AIDANT : ne voit QUE les commandes des patients qui lui sont assignés
-            // OU les commandes qu'il a déjà prises en charge
-            
-            // 1. Récupérer les patients assignés à cet aidant
+            // Récupérer les patients assignés à cet aidant
             const { data: assignments, error: assignErr } = await supabase
                 .from("planning")
                 .select("patient_id")
@@ -638,21 +611,13 @@ router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, r
             
             const assignedPatientIds = assignments ? assignments.map(a => a.patient_id) : [];
             
-            // 2. L'aidant voit :
-            // - Les commandes des patients qui lui sont assignés
-            // - Les commandes qu'il a déjà prises en charge (aidant_id = lui)
-            // - ⚠️ NE VOIT PAS les commandes en attente des autres patients
-            
             if (assignedPatientIds.length > 0) {
-                // Il a des patients assignés → voir leurs commandes + ses commandes
                 query = query.or(`patient_id.in.(${assignedPatientIds.join(',')}),aidant_id.eq.${req.user.userId}`);
             } else {
-                // Pas de patient assigné → il voit seulement ses propres commandes
                 query = query.eq("aidant_id", req.user.userId);
             }
         }
         else if (req.user.role === "FAMILLE") {
-            // ✅ Famille : ses patients uniquement
             if (isSansPatient) {
                 query = query.eq("user_id", req.user.userId);
             } else {
@@ -680,16 +645,12 @@ router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, r
     }
 });
 
+// ============================================================
+// 📦 8. COMMANDES PERSONNELLES (pour comptes SANS_PATIENT)
+// ============================================================
 
-
-
-/**
- * 📦 5. COMMANDES PERSONNELLES (pour comptes SANS_PATIENT)
- * Retourne uniquement les commandes liées à l'utilisateur
- */
 router.get("/mes-commandes", middleware(["FAMILLE"]), async (req, res) => {
     try {
-        // Vérifier que l'utilisateur est bien SANS_PATIENT
         const { data: profile } = await supabase
             .from("profiles")
             .select("type_compte")
@@ -719,9 +680,10 @@ router.get("/mes-commandes", middleware(["FAMILLE"]), async (req, res) => {
     }
 });
 
-/**
- * ✅ COORDINATEUR - VALIDER TOUTES LES LIVRAISONS DU JOUR
- */
+// ============================================================
+// ✅ 9. COORDINATEUR - VALIDER TOUTES LES LIVRAISONS DU JOUR
+// ============================================================
+
 router.post("/validate-all", middleware(["COORDINATEUR"]), async (req, res) => {
     try {
         const today = new Date().toISOString().split('T')[0];
@@ -745,24 +707,15 @@ router.post("/validate-all", middleware(["COORDINATEUR"]), async (req, res) => {
     }
 });
 
-
-
-/**
- * ⏰ AUTO-ASSIGNATION DES COMMANDES (appelé par cron)
- */
-
-
-// Exposer la fonction pour le cron
+// ============================================================
+// 📸 10. UPLOADER UNE IMAGE POUR UNE COMMANDE
+// ============================================================
 
 router.post("/upload-image", middleware(["FAMILLE", "AIDANT", "COORDINATEUR"]), upload.single('image'), async (req, res) => {
     try {
         const file = req.file;
         if (!file) return res.status(400).json({ error: "Aucune image" });
         
-        // ❌ ANCIEN (créait un dossier "commandes" dans le bucket "commandes")
-        // const fileName = `commandes/${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
-        
-        // ✅ NOUVEAU (fichier directement à la racine du bucket)
         const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
         
         console.log("📤 Upload vers:", fileName);
@@ -787,7 +740,10 @@ router.post("/upload-image", middleware(["FAMILLE", "AIDANT", "COORDINATEUR"]), 
     }
 });
 
-// Fonction auto-assignation
+// ============================================================
+// ⏰ 11. AUTO-ASSIGNATION DES COMMANDES (appelé par cron)
+// ============================================================
+
 async function autoAssignPendingCommands() {
     console.log("🔍 [AUTO-ASSIGN] Début de la vérification...");
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
@@ -826,19 +782,22 @@ async function autoAssignPendingCommands() {
                 })
                 .eq("id", cmd.id);
             
-await createNotification(
-    aidantId,
-    cmd.urgent ? "⚠️ Commande urgente (auto-assignée)" : "📦 Nouvelle commande (auto-assignée)",
-    `Une commande ${cmd.urgent ? "urgente " : ""}vous a été automatiquement assignée.`,
-    "commande",
-    "/#commandes"
-);
+            await createNotification(
+                aidantId,
+                cmd.urgent ? "⚠️ Commande urgente (auto-assignée)" : "📦 Nouvelle commande (auto-assignée)",
+                `Une commande ${cmd.urgent ? "urgente " : ""}vous a été automatiquement assignée.`,
+                "commande",
+                "/#commandes"
+            );
             
             console.log(`✅ Commande ${cmd.id} auto-assignée à ${aidantNom}`);
         }
     }
 }
 
-// Exporter correctement
+// ============================================================
+// EXPORTS
+// ============================================================
+
 module.exports = router;
 module.exports.autoAssignPendingCommands = autoAssignPendingCommands;
