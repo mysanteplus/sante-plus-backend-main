@@ -44,7 +44,7 @@ app.use(helmet({
             styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com"],
             scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.jsdelivr.net", "https://www.gstatic.com"],
             imgSrc: ["'self'", "data:", "https://*.supabase.co"],
-            connectSrc: ["'self'", "https://*.supabase.co", "https://*.onrender.com", "https://sante-plus-backend-main.onrender.com"],
+            connectSrc: ["'self'", "https://*.supabase.co", "https://*.onrender.com"],
             fontSrc: ["'self'", "data:"],
         },
     },
@@ -89,10 +89,9 @@ app.use((req, res, next) => {
 });
 
 // ============================================================
-// CORS - CORRIGÉ POUR PRODUCTION
+// CORS - SÉCURISÉ
 // ============================================================
 
-// ✅ Autoriser explicitement les domaines en production
 const allowedOrigins = [
     'https://app.mysanteplus.com',
     'https://sante-plus-backend-main.onrender.com',
@@ -102,18 +101,13 @@ const allowedOrigins = [
 
 app.use(cors({
     origin: function (origin, callback) {
-        // Autoriser les requêtes sans origin (comme les appels API internes)
         if (!origin) {
             return callback(null, true);
         }
-        
-        // Vérifier si l'origine est autorisée
         if (allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
         } else {
-            // EN PRODUCTION : on log et on refuse
             console.log(`❌ CORS bloqué pour: ${origin}`);
-            console.log(`   Origines autorisées: ${allowedOrigins.join(', ')}`);
             callback(new Error('Non autorisé par CORS'));
         }
     },
@@ -123,7 +117,7 @@ app.use(cors({
     optionsSuccessStatus: 200
 }));
 
-// ✅ LOG DES REQUÊTES (pour debug en production)
+// ✅ LOG DES REQUÊTES
 app.use((req, res, next) => {
     const origin = req.headers.origin || 'no origin';
     console.log(`📡 ${req.method} ${req.url} - Origin: ${origin}`);
@@ -131,30 +125,11 @@ app.use((req, res, next) => {
 });
 
 // ============================================================
-// ROUTES PUBLIQUES (SANS AUTHENTIFICATION)
+// ROUTES PUBLIQUES
 // ============================================================
 
 // Health check
 app.get("/", (req, res) => res.send("🚀 Santé Plus Services API opérationnelle"));
-
-// ============================================================
-// CONFIGURATION INJECTION (pour le frontend)
-// ============================================================
-
-/**
- * ✅ Endpoint pour injecter la configuration au frontend
- * Ceci permet d'éviter d'avoir des clés en dur dans le code frontend
- * ⚠️ Cette route doit être PUBLIQUE et avant tous les middlewares de sécurité
- */
-app.get('/api/config', (req, res) => {
-    console.log(`📡 [CONFIG] Requête depuis: ${req.headers.origin || 'inconnu'}`);
-    res.json({
-        supabaseUrl: process.env.SUPABASE_URL,
-        supabaseKey: process.env.SUPABASE_SERVICE_KEY,
-        apiUrl: process.env.API_URL || `${req.protocol}://${req.get('host')}/api`,
-        environment: process.env.NODE_ENV || 'production'
-    });
-});
 
 // ============================================================
 // ROUTES DE NOTIFICATIONS
@@ -281,7 +256,7 @@ const educationRoutes = require("./routes/education");
 const adminUsersRoutes = require("./routes/admin-users");
 
 // ============================================================
-// LOGS DE DÉBOGAGE - POUR VÉRIFIER LE CHARGEMENT
+// LOGS DE DÉBOGAGE
 // ============================================================
 console.log("📦 Routes chargées:");
 console.log("  - authRoutes:", typeof authRoutes, authRoutes ? '✅' : '❌');
