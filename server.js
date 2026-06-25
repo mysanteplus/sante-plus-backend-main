@@ -32,6 +32,22 @@ app.use((req, res, next) => {
 // ============================================================
 const upload = multer({ storage: multer.memoryStorage() });
 
+
+/**
+ * ✅ Endpoint pour injecter la configuration au frontend
+ * Ceci permet d'éviter d'avoir des clés en dur dans le code frontend
+ */
+app.get('/api/config', (req, res) => {
+    // ✅ Uniquement les variables nécessaires au frontend
+    res.json({
+        supabaseUrl: process.env.SUPABASE_URL,
+        supabaseKey: process.env.SUPABASE_SERVICE_KEY,
+        apiUrl: process.env.API_URL || `${req.protocol}://${req.get('host')}/api`,
+        environment: process.env.NODE_ENV || 'production',
+        // Ne jamais exposer les clés secrètes ici !
+        // Seulement ce qui est nécessaire pour le frontend
+    });
+});
 // ============================================================
 // MIDDLEWARES DE SÉCURITÉ
 // ============================================================
@@ -121,21 +137,7 @@ app.get("/", (req, res) => res.send("🚀 Santé Plus Services API opérationnel
 // CONFIGURATION INJECTION (pour le frontend)
 // ============================================================
 
-/**
- * ✅ Endpoint pour injecter la configuration au frontend
- * Ceci permet d'éviter d'avoir des clés en dur dans le code frontend
- */
-app.get('/api/config', (req, res) => {
-    // ✅ Uniquement les variables nécessaires au frontend
-    res.json({
-        supabaseUrl: process.env.SUPABASE_URL,
-        supabaseKey: process.env.SUPABASE_SERVICE_KEY,
-        apiUrl: process.env.API_URL || `${req.protocol}://${req.get('host')}/api`,
-        environment: process.env.NODE_ENV || 'production',
-        // Ne jamais exposer les clés secrètes ici !
-        // Seulement ce qui est nécessaire pour le frontend
-    });
-});
+
 
 // ============================================================
 // ROUTES DE NOTIFICATIONS
