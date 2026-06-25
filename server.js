@@ -24,8 +24,7 @@ const BUILD_DATE = new Date().toISOString();
 app.use((req, res, next) => {
   res.setHeader('X-App-Version', APP_VERSION);
   res.setHeader('X-Build-Date', BUILD_DATE);
-  console.log(`📡 ${req.method} ${req.url} - Origin: ${req.headers.origin || 'no origin'}`);
-   next();
+  next();
 });
 
 // ============================================================
@@ -33,22 +32,6 @@ app.use((req, res, next) => {
 // ============================================================
 const upload = multer({ storage: multer.memoryStorage() });
 
-
-/**
- * ✅ Endpoint pour injecter la configuration au frontend
- * Ceci permet d'éviter d'avoir des clés en dur dans le code frontend
- */
-app.get('/api/config', (req, res) => {
-    // ✅ Uniquement les variables nécessaires au frontend
-    res.json({
-        supabaseUrl: process.env.SUPABASE_URL,
-        supabaseKey: process.env.SUPABASE_SERVICE_KEY,
-        apiUrl: process.env.API_URL || `${req.protocol}://${req.get('host')}/api`,
-        environment: process.env.NODE_ENV || 'production',
-        // Ne jamais exposer les clés secrètes ici !
-        // Seulement ce qui est nécessaire pour le frontend
-    });
-});
 // ============================================================
 // MIDDLEWARES DE SÉCURITÉ
 // ============================================================
@@ -61,7 +44,7 @@ app.use(helmet({
             styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com"],
             scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.jsdelivr.net", "https://www.gstatic.com"],
             imgSrc: ["'self'", "data:", "https://*.supabase.co"],
-            connectSrc: ["'self'", "https://*.supabase.co", "https://*.onrender.com"],
+            connectSrc: ["'self'", "https://*.supabase.co", "https://*.onrender.com", "https://sante-plus-backend-main.onrender.com"],
             fontSrc: ["'self'", "data:"],
         },
     },
@@ -106,28 +89,46 @@ app.use((req, res, next) => {
 });
 
 // ============================================================
-// CORS - SÉCURISÉ
+// CORS - CORRIGÉ POUR PRODUCTION
 // ============================================================
- const allowedOrigins = process.env.NODE_ENV === 'production' 
-    ? ['https://app.mysanteplus.com', 'https://sante-plus-backend-main.onrender.com']
-    : ['https://app.mysanteplus.com', 'http://localhost:5500', 'http://127.0.0.1:5500'];
+
+// ✅ Autoriser explicitement les domaines en production
+const allowedOrigins = [
+    'https://app.mysanteplus.com',
+    'https://sante-plus-backend-main.onrender.com',
+    'http://localhost:5500',
+    'http://127.0.0.1:5500'
+];
 
 app.use(cors({
     origin: function (origin, callback) {
-        // ✅ Autoriser les requêtes sans origin (comme les appels API internes)
-        if (!origin) return callback(null, true);
-        // ✅ Permettre les requêtes depuis app.mysanteplus.com
+        // Autoriser les requêtes sans origin (comme les appels API internes)
+        if (!origin) {
+            return callback(null, true);
+        }
+        
+        // Vérifier si l'origine est autorisée
         if (allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
         } else {
+            // EN PRODUCTION : on log et on refuse
             console.log(`❌ CORS bloqué pour: ${origin}`);
+            console.log(`   Origines autorisées: ${allowedOrigins.join(', ')}`);
             callback(new Error('Non autorisé par CORS'));
         }
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control'],
-    credentials: true
+    credentials: true,
+    optionsSuccessStatus: 200
 }));
+
+// ✅ LOG DES REQUÊTES (pour debug en production)
+app.use((req, res, next) => {
+    const origin = req.headers.origin || 'no origin';
+    console.log(`📡 ${req.method} ${req.url} - Origin: ${origin}`);
+    next();
+});
 
 // ============================================================
 // ROUTES PUBLIQUES (SANS AUTHENTIFICATION)
@@ -140,7 +141,20 @@ app.get("/", (req, res) => res.send("🚀 Santé Plus Services API opérationnel
 // CONFIGURATION INJECTION (pour le frontend)
 // ============================================================
 
-
+/**
+ * ✅ Endpoint pour injecter la configuration au frontend
+ * Ceci permet d'éviter d'avoir des clés en dur dans le code frontend
+ * ⚠️ Cette route doit être PUBLIQUE et avant tous les middlewares de sécurité
+ */
+app.get('/api/config', (req, res) => {
+    console.log(`📡 [CONFIG] Requête depuis: ${req.headers.origin || 'inconnu'}`);
+    res.json({
+        supabaseUrl: process.env.SUPABASE_URL,
+        supabaseKey: process.env.SUPABASE_SERVICE_KEY,
+        apiUrl: process.env.API_URL || `${req.protocol}://${req.get('host')}/api`,
+        environment: process.env.NODE_ENV || 'production'
+    });
+});
 
 // ============================================================
 // ROUTES DE NOTIFICATIONS
