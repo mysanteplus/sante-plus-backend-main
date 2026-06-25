@@ -1,12 +1,13 @@
-// backend/routes/notifications.js
+ 
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
 const middleware = require("../middleware");
 
-/**
- * 📋 RÉCUPÉRER LES NOTIFICATIONS DE L'UTILISATEUR
- */
+// ============================================================
+// 📋 RÉCUPÉRER LES NOTIFICATIONS DE L'UTILISATEUR
+// ============================================================
+
 router.get("/", middleware(), async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -24,9 +25,10 @@ router.get("/", middleware(), async (req, res) => {
   }
 });
 
-/**
- * ✅ MARQUER UNE NOTIFICATION COMME LUE
- */
+// ============================================================
+// ✅ MARQUER UNE NOTIFICATION COMME LUE
+// ============================================================
+
 router.post("/mark-read/:id", middleware(), async (req, res) => {
   const { id } = req.params;
 
@@ -35,7 +37,7 @@ router.post("/mark-read/:id", middleware(), async (req, res) => {
       .from("notifications")
       .update({
         read: true,
-        read_at: new Date()
+        read_at: new Date().toISOString()
       })
       .eq("id", id)
       .eq("user_id", req.user.userId);
@@ -49,31 +51,19 @@ router.post("/mark-read/:id", middleware(), async (req, res) => {
   }
 });
 
-/**
- * ✅ MARQUER TOUTES LES NOTIFICATIONS COMME LUES
- */
- 
+// ============================================================
+// ✅ MARQUER TOUTES LES NOTIFICATIONS COMME LUES (CORRIGÉ)
+// ============================================================
+
 router.post("/mark-all-read", middleware(), async (req, res) => {
   try {
-    // Vérifier si la colonne read_at existe
-    const { data: columns } = await supabase
-      .from('notifications')
-      .select('read_at')
-      .limit(1);
-    
-    const hasReadAt = columns !== null;
-    
-    const updateData = {
-      read: true
-    };
-    
-    if (hasReadAt) {
-      updateData.read_at = new Date().toISOString();
-    }
-    
+    // ✅ Mise à jour directe avec les deux champs
     const { error } = await supabase
       .from("notifications")
-      .update(updateData)
+      .update({
+        read: true,
+        read_at: new Date().toISOString()
+      })
       .eq("user_id", req.user.userId)
       .eq("read", false);
 
@@ -86,16 +76,10 @@ router.post("/mark-all-read", middleware(), async (req, res) => {
   }
 });
 
-/**
- * 🔔 CRÉER UNE NOTIFICATION COMPLÈTE
- *
- * Cette fonction :
- * 1. Enregistre la notification dans Supabase
- * 2. Envoie une push Firebase si l'utilisateur a un push_token
- *
- * Important :
- * sendPushNotification() ne doit PAS réinsérer dans Supabase.
- */
+// ============================================================
+// 🔔 CRÉER UNE NOTIFICATION COMPLÈTE
+// ============================================================
+
 async function createNotification(
   userId,
   title,
@@ -125,11 +109,15 @@ async function createNotification(
           type: finalType,
           url: finalUrl,
           read: false,
-          created_at: new Date()
+          read_at: null,
+          created_at: new Date().toISOString()
         }
       ]);
 
-    if (error) throw error;
+    if (error) {
+      console.error("❌ Erreur insertion notification:", error);
+      throw error;
+    }
 
     console.log(`✅ Notification enregistrée pour ${userId}`);
 
@@ -161,6 +149,54 @@ async function createNotification(
     return false;
   }
 }
+
+// ============================================================
+// 🗑️ SUPPRIMER UNE NOTIFICATION (optionnel)
+// ============================================================
+
+router.delete("/:id", middleware(), async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const { error } = await supabase
+      .from("notifications")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", req.user.userId);
+
+    if (error) throw error;
+
+    res.json({ status: "success" });
+  } catch (err) {
+    console.error("❌ Erreur suppression notification:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 📊 COMPTER LES NOTIFICATIONS NON LUES (optionnel)
+// ============================================================
+
+router.get("/unread-count", middleware(), async (req, res) => {
+  try {
+    const { count, error } = await supabase
+      .from("notifications")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", req.user.userId)
+      .eq("read", false);
+
+    if (error) throw error;
+
+    res.json({ unread: count || 0 });
+  } catch (err) {
+    console.error("❌ Erreur comptage notifications:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// EXPORTS
+// ============================================================
 
 module.exports = router;
 module.exports.createNotification = createNotification;
