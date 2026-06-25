@@ -44,7 +44,10 @@ async function hasAccessToPatient(patientId, userId, role) {
   return false;
 }
 
-// 📋 1. LISTER LES PATIENTS (CORRIGÉ)
+// ============================================================
+// 📋 1. LISTER LES PATIENTS (FILTRÉ PAR RÔLE)
+// ============================================================
+
 router.get("/", middleware(["COORDINATEUR", "FAMILLE", "AIDANT"]), async (req, res) => {
   try {
     let query = supabase.from("patients").select(`
@@ -52,37 +55,46 @@ router.get("/", middleware(["COORDINATEUR", "FAMILLE", "AIDANT"]), async (req, r
         famille:famille_user_id (nom, email, telephone)
     `);
 
-    // 🔥 CORRECTION POUR LA FAMILLE
+    // ✅ FAMILLE : ne voit que SES patients
     if (req.user.role === "FAMILLE") {
-      // Une famille ne voit que SES patients (ceux liés à son ID)
       query = query.eq("famille_user_id", req.user.userId);
     } 
+    // ✅ AIDANT : ne voit que les patients QUI LUI SONT ASSIGNÉS
     else if (req.user.role === "AIDANT") {
-      // Un aidant voit les patients qui lui sont assignés
-      const { data: planning } = await supabase
+      // Récupérer les patients assignés à cet aidant
+      const { data: planning, error: planningErr } = await supabase
         .from("planning")
         .select("patient_id")
         .eq("aidant_id", req.user.userId)
         .eq("est_actif", true);
       
+      if (planningErr) {
+        console.error("❌ Erreur récupération planning:", planningErr);
+        return res.status(500).json({ error: planningErr.message });
+      }
+      
       const patientIds = planning ? planning.map(p => p.patient_id) : [];
       
+      // ✅ Si l'aidant n'a aucun patient assigné, retourner un tableau vide
       if (patientIds.length === 0) {
         return res.json([]);
       }
+      
+      // ✅ Filtrer les patients par ceux assignés
       query = query.in("id", patientIds);
     }
-    // COORDINATEUR voit tout (pas de filtre)
+    // COORDINATEUR : voit tout (pas de filtre)
 
     const { data, error } = await query.order("created_at", { ascending: false });
     if (error) throw error;
+    
+    console.log(`📋 Patients retournés pour ${req.user.role} (${req.user.userId}): ${data?.length || 0}`);
     res.json(data || []);
   } catch (err) {
     console.error("❌ Erreur Route Patients:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
-
 // ============================================================
 // ➕ 2. AJOUTER UN PATIENT
 // ============================================================
