@@ -14,13 +14,13 @@ const { createNotification } = require("./notifications");
 
 const PACKS = {
     MEDICAL_SENIOR: {
-        ESSENTIEL: { price: 45000, duration: 1, name: "Essentiel", visits: 4 },
+        ESSENTIEL: { price: 100, duration: 1, name: "Essentiel", visits: 4 }, //45000
         ACCOMPAGNEMENT: { price: 80000, duration: 1, name: "Accompagnement", visits: 8 },
         SERENITE: { price: 100000, duration: 1, name: "Sérénité Seniors", visits: 12 },
         PRIVILEGE: { price: 200000, duration: 1, name: "Privilège Famille", visits: 0 }
     },
     MEDICAL_MAMAN: {
-        ESSENTIEL: { price: 65000, duration: 0.5, name: "Essentiel", weeks: 2 },
+        ESSENTIEL: { price: 100, duration: 0.5, name: "Essentiel", weeks: 2 }, //65000
         CONFORT: { price: 100000, duration: 0.75, name: "Confort", weeks: 3 },
         SERENITE: { price: 140000, duration: 1, name: "Sérénité", weeks: 4 },
         PRIVILEGE: { price: 200000, duration: 1.25, name: "Privilège", weeks: 5 }
