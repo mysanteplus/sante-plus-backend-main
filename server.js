@@ -24,7 +24,8 @@ const BUILD_DATE = new Date().toISOString();
 app.use((req, res, next) => {
   res.setHeader('X-App-Version', APP_VERSION);
   res.setHeader('X-Build-Date', BUILD_DATE);
-  next();
+  console.log(`📡 ${req.method} ${req.url} - Origin: ${req.headers.origin || 'no origin'}`);
+   next();
 });
 
 // ============================================================
@@ -107,17 +108,19 @@ app.use((req, res, next) => {
 // ============================================================
 // CORS - SÉCURISÉ
 // ============================================================
-const allowedOrigins = process.env.NODE_ENV === 'production' 
-    ? ['https://app.mysanteplus.com']
+ const allowedOrigins = process.env.NODE_ENV === 'production' 
+    ? ['https://app.mysanteplus.com', 'https://sante-plus-backend-main.onrender.com']
     : ['https://app.mysanteplus.com', 'http://localhost:5500', 'http://127.0.0.1:5500'];
 
 app.use(cors({
     origin: function (origin, callback) {
-        // Autoriser les requêtes sans origin (comme les appels API internes)
+        // ✅ Autoriser les requêtes sans origin (comme les appels API internes)
         if (!origin) return callback(null, true);
+        // ✅ Permettre les requêtes depuis app.mysanteplus.com
         if (allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
         } else {
+            console.log(`❌ CORS bloqué pour: ${origin}`);
             callback(new Error('Non autorisé par CORS'));
         }
     },
