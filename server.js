@@ -99,16 +99,25 @@ app.use((req, res, next) => {
 });
 
 // ============================================================
-// CORS (CORRIGÉ)
+// CORS  
 // ============================================================
+// ✅ CORS - Sécurisé
+const allowedOrigins = process.env.NODE_ENV === 'production' 
+    ? ['https://app.mysanteplus.com']
+    : ['https://app.mysanteplus.com', 'http://localhost:5500', 'http://127.0.0.1:5500'];
+
 app.use(cors({
-    origin: [
-        'https://app.mysanteplus.com',
-        'http://localhost:5500',
-        'http://127.0.0.1:5500'
-    ],
+    origin: function (origin, callback) {
+        // Autoriser les requêtes sans origin (comme les appels API internes)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            callback(new Error('Non autorisé par CORS'));
+        }
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control'], 
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control'],
     credentials: true
 }));
 
