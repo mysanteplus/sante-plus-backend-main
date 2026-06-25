@@ -18,7 +18,7 @@ app.set("trust proxy", 1);
 // VERSION DE L'APPLICATION
 // ============================================================
 
-const APP_VERSION = '2.0.2';
+const APP_VERSION = '2.0.3';
 const BUILD_DATE = new Date().toISOString();
 
 app.get('/version.json', (req, res) => {
