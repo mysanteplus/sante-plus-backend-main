@@ -36,7 +36,7 @@ router.post("/add", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) =>
     
     console.log("📦 Création commande - Images reçues:", images);
     
-    // ✅ VÉRIFICATION ABONNEMENT ACTIF (sauf pour coordinateur)
+    // ✅ VÉRIFICATION ABONNEMENT RÉELLE (sauf pour coordinateur)
     if (req.user.role !== "COORDINATEUR") {
         const hasSubscription = await checkActiveSubscription(req.user.userId, req.user.role);
         if (!hasSubscription) {
@@ -47,6 +47,7 @@ router.post("/add", middleware(["COORDINATEUR", "FAMILLE"]), async (req, res) =>
         }
         console.log(`✅ Abonnement actif pour ${req.user.userId}`);
     }
+    
     
     // Récupérer le type de compte de l'utilisateur
     const { data: profile, error: profileErr } = await supabase
