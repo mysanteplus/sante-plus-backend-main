@@ -52,14 +52,28 @@ router.post("/mark-read/:id", middleware(), async (req, res) => {
 /**
  * ✅ MARQUER TOUTES LES NOTIFICATIONS COMME LUES
  */
+ 
 router.post("/mark-all-read", middleware(), async (req, res) => {
   try {
+    // Vérifier si la colonne read_at existe
+    const { data: columns } = await supabase
+      .from('notifications')
+      .select('read_at')
+      .limit(1);
+    
+    const hasReadAt = columns !== null;
+    
+    const updateData = {
+      read: true
+    };
+    
+    if (hasReadAt) {
+      updateData.read_at = new Date().toISOString();
+    }
+    
     const { error } = await supabase
       .from("notifications")
-      .update({
-        read: true,
-        read_at: new Date()
-      })
+      .update(updateData)
       .eq("user_id", req.user.userId)
       .eq("read", false);
 
