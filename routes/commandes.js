@@ -592,12 +592,12 @@ router.post("/:id/deliver", middleware(["AIDANT"]), upload.array('photos', 5), a
 });
 
 
-/**
- * 📋 4. LISTER LES COMMANDES (Filtrage par rôle et type de compte)
- */
-/**
- * 📋 4. LISTER LES COMMANDES (Filtrage par rôle et type de compte) - CORRIGÉ
- */
+
+
+// ============================================================
+// 📋 4. LISTER LES COMMANDES (FILTRÉ PAR RÔLE)
+// ============================================================
+
 router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, res) => {
     try {
         const { data: profile } = await supabase
@@ -616,38 +616,42 @@ router.get("/", middleware(["COORDINATEUR", "AIDANT", "FAMILLE"]), async (req, r
         `);
 
         if (req.user.role === "COORDINATEUR") {
+            // ✅ Coordinateur : voit tout
             // Pas de filtre
         }
         else if (req.user.role === "AIDANT") {
-            // ✅ L'aidant voit :
-            // 1. Les commandes des patients qui lui sont assignés
-            // 2. Les commandes où il est déjà le livreur
-            // 3. TOUTES les commandes en attente (pour qu'il puisse les prendre)
+            // ✅ AIDANT : ne voit QUE les commandes des patients qui lui sont assignés
+            // OU les commandes qu'il a déjà prises en charge
             
-            // Récupérer les patients assignés à l'aidant
-            const { data: assignments } = await supabase
+            // 1. Récupérer les patients assignés à cet aidant
+            const { data: assignments, error: assignErr } = await supabase
                 .from("planning")
                 .select("patient_id")
                 .eq("aidant_id", req.user.userId)
                 .eq("est_actif", true);
             
+            if (assignErr) {
+                console.error("❌ Erreur récupération assignations:", assignErr);
+                return res.status(500).json({ error: assignErr.message });
+            }
+            
             const assignedPatientIds = assignments ? assignments.map(a => a.patient_id) : [];
             
-            // ✅ Construire la condition OR
-            // L'aidant voit :
-            // - Les commandes de ses patients assignés (quel que soit le statut)
+            // 2. L'aidant voit :
+            // - Les commandes des patients qui lui sont assignés
             // - Les commandes qu'il a déjà prises en charge (aidant_id = lui)
-            // - Les commandes en attente (pour qu'il puisse les prendre)
+            // - ⚠️ NE VOIT PAS les commandes en attente des autres patients
             
             if (assignedPatientIds.length > 0) {
-                // Il a des patients assignés
+                // Il a des patients assignés → voir leurs commandes + ses commandes
                 query = query.or(`patient_id.in.(${assignedPatientIds.join(',')}),aidant_id.eq.${req.user.userId}`);
             } else {
-                // Pas de patient assigné, il voit juste ses commandes et les commandes en attente
-                query = query.or(`aidant_id.eq.${req.user.userId},statut.eq.En attente`);
+                // Pas de patient assigné → il voit seulement ses propres commandes
+                query = query.eq("aidant_id", req.user.userId);
             }
         }
         else if (req.user.role === "FAMILLE") {
+            // ✅ Famille : ses patients uniquement
             if (isSansPatient) {
                 query = query.eq("user_id", req.user.userId);
             } else {
