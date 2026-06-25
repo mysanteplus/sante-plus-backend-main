@@ -147,49 +147,119 @@ function getRealtimeChannel() {
 }
 
 // ============================================================
-// 🔒 VÉRIFICATION ABONNEMENT
+// 🔒 VÉRIFICATION RÉELLE DE L'ABONNEMENT
 // ============================================================
 
 async function checkActiveSubscription(userId, userRole) {
-    // Les coordinateurs et aidants ont toujours accès
+    // ✅ Les coordinateurs et aidants ont toujours accès (ils n'ont pas d'abonnement)
     if (userRole === "COORDINATEUR" || userRole === "AIDANT") {
         return true;
     }
     
     try {
+        // 1. Récupérer le profil pour connaître le type de compte
         const { data: profile, error: profileErr } = await supabase
             .from("profiles")
-            .select("type_compte, pack_confort_actif, date_fin_pack_confort")
+            .select("type_compte")
             .eq("id", userId)
             .single();
         
-        if (profileErr) return false;
+        if (profileErr) {
+            console.error("❌ Erreur récupération profil:", profileErr);
+            return false;
+        }
         
+        // 2. CAS : Compte AVEC patient (abonnement médical)
         if (profile?.type_compte === 'AVEC_PATIENT') {
+            // Récupérer le patient lié à cette famille
             const { data: patient, error: patientErr } = await supabase
                 .from("patients")
-                .select("statut_paiement, date_fin_abonnement")
+                .select("id, date_fin_abonnement, statut_paiement")
                 .eq("famille_user_id", userId)
                 .single();
             
-            if (patientErr || !patient) return false;
-            
-            if (patient.statut_paiement !== 'A jour') return false;
-            
-            if (patient.date_fin_abonnement) {
-                return new Date() <= new Date(patient.date_fin_abonnement);
+            if (patientErr || !patient) {
+                console.error("❌ Patient non trouvé pour la famille:", userId);
+                return false;
             }
             
+            // ✅ VÉRIFICATION RÉELLE :
+            // 1. Le statut_paiement doit être "A jour"
+            if (patient.statut_paiement !== "A jour") {
+                console.log(`❌ Abonnement expiré pour ${userId}: statut_paiement = ${patient.statut_paiement}`);
+                return false;
+            }
+            
+            // 2. La date_fin_abonnement doit exister et ne pas être dépassée
+            if (!patient.date_fin_abonnement) {
+                console.log(`❌ Abonnement sans date de fin pour ${userId}`);
+                return false;
+            }
+            
+            const today = new Date();
+            const endDate = new Date(patient.date_fin_abonnement);
+            
+            if (today > endDate) {
+                console.log(`❌ Abonnement expiré pour ${userId}: ${endDate.toISOString().split('T')[0]}`);
+                // Mettre à jour le statut en base
+                await supabase
+                    .from("patients")
+                    .update({ statut_paiement: "Expiré" })
+                    .eq("id", patient.id);
+                return false;
+            }
+            
+            console.log(`✅ Abonnement actif pour ${userId} jusqu'au ${endDate.toISOString().split('T')[0]}`);
             return true;
         }
         
+        // 3. CAS : Compte SANS patient (Pack Confort)
         if (profile?.type_compte === 'SANS_PATIENT') {
-            if (!profile.pack_confort_actif) return false;
-            if (!profile.date_fin_pack_confort) return false;
-            return new Date() <= new Date(profile.date_fin_pack_confort);
+            // Récupérer l'abonnement Confort actif
+            const { data: abonnement, error: aboErr } = await supabase
+                .from("abonnements")
+                .select("date_fin_abonnement, statut")
+                .eq("user_id", userId)
+                .eq("type_pack", "CONFORT_247")
+                .eq("statut", "Payé")
+                .order("date_fin_abonnement", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            
+            if (aboErr) {
+                console.error("❌ Erreur récupération abonnement Confort:", aboErr);
+                return false;
+            }
+            
+            if (!abonnement) {
+                console.log(`❌ Aucun Pack Confort actif pour ${userId}`);
+                return false;
+            }
+            
+            if (!abonnement.date_fin_abonnement) {
+                console.log(`❌ Pack Confort sans date de fin pour ${userId}`);
+                return false;
+            }
+            
+            const today = new Date();
+            const endDate = new Date(abonnement.date_fin_abonnement);
+            
+            if (today > endDate) {
+                console.log(`❌ Pack Confort expiré pour ${userId}`);
+                // Mettre à jour le profil
+                await supabase
+                    .from("profiles")
+                    .update({ pack_confort_actif: false })
+                    .eq("id", userId);
+                return false;
+            }
+            
+            console.log(`✅ Pack Confort actif pour ${userId} jusqu'au ${endDate.toISOString().split('T')[0]}`);
+            return true;
         }
         
-        return false;
+        // Autres cas : pas d'abonnement nécessaire
+        return true;
         
     } catch (err) {
         console.error("❌ Erreur checkActiveSubscription:", err);
